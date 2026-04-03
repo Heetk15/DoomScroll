@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: doomscroll_redis
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    container_name: doomscroll_fastapi
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app  
+    depends_on:
+      - redis
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
