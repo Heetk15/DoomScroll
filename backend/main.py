@@ -1,15 +1,51 @@
 import json
 import os
 import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import Float, String, DateTime, Integer, create_engine, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
 
 load_dotenv()
 
-app = FastAPI(title="DoomScroll API")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class SentimentHistory(Base):
+    __tablename__ = "sentiment_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    panic_score: Mapped[float] = mapped_column(Float, nullable=False)
+    top_headline: Mapped[str] = mapped_column(String(2000), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="DoomScroll API", lifespan=lifespan)
 
 redis_client = redis.Redis.from_url(
     os.getenv("REDIS_URL", "redis://localhost:6379/0"),
@@ -21,6 +57,23 @@ HF_FINBERT_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/fin
 HEADLINE_LIMIT = 10
 HF_MAX_ATTEMPTS = 6
 HF_RETRY_BASE_SEC = 5.0
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+class SentimentHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    panic_score: float
+    top_headline: str
+    timestamp: datetime
 
 
 def _require_env(name: str) -> str:
@@ -133,31 +186,48 @@ def score_headline_finbert(text: str, hf_token: str) -> float:
     raise ValueError(f"FinBERT unavailable after retries: {last_error}")
 
 
-def fetch_and_score_news() -> None:
+def fetch_and_score_news(db: Session) -> None:
     hf_token = _require_env("HUGGINGFACE_TOKEN")
     headlines = fetch_general_headlines()
     line_scores: list[float] = []
     for headline in headlines:
         line_scores.append(score_headline_finbert(headline, hf_token))
     panic_score = round(sum(line_scores) / len(line_scores), 2)
+    recorded_at = datetime.now(timezone.utc)
+    top_headline = headlines[0]
+    if len(top_headline) > 2000:
+        top_headline = top_headline[:2000]
+    record = SentimentHistory(
+        panic_score=panic_score,
+        top_headline=top_headline,
+        timestamp=recorded_at,
+    )
+    db.add(record)
+    db.commit()
     payload = {
         "panic_score": panic_score,
         "headlines": headlines,
-        "timestamp": time.time(),
+        "timestamp": recorded_at.timestamp(),
     }
     redis_client.setex("current_sentiment", 900, json.dumps(payload))
 
 
 @app.get("/api/sentiment")
-def get_sentiment(_background_tasks: BackgroundTasks) -> dict:
+def get_sentiment(
+    _background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     cached = redis_client.get("current_sentiment")
     if cached is not None:
         return json.loads(cached)
     try:
-        fetch_and_score_news()
+        fetch_and_score_news(db)
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     fresh = redis_client.get("current_sentiment")
     if fresh is None:
@@ -166,3 +236,11 @@ def get_sentiment(_background_tasks: BackgroundTasks) -> dict:
             detail="failed to persist sentiment after refresh",
         )
     return json.loads(fresh)
+
+
+@app.get("/api/history", response_model=list[SentimentHistoryRead])
+def get_history(db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(SentimentHistory).order_by(SentimentHistory.timestamp.asc()),
+    ).all()
+    return rows

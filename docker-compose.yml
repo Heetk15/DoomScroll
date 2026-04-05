@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:alpine
@@ -7,16 +5,40 @@ services:
     ports:
       - "6379:6379"
 
+  db:
+    image: postgres:15-alpine
+    container_name: doomscroll_postgres
+    environment:
+      POSTGRES_USER: doom_user
+      POSTGRES_PASSWORD: doom_pass
+      POSTGRES_DB: doomscroll_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - doomscroll_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doom_user -d doomscroll_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: doomscroll_fastapi
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app  
+      - ./backend:/app
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
     env_file:
       - ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://doom_user:doom_pass@db:5432/doomscroll_db
+
+volumes:
+  doomscroll_pg_data:
