@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Float, String, DateTime, Integer, create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -46,6 +47,14 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="DoomScroll API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 redis_client = redis.Redis.from_url(
     os.getenv("REDIS_URL", "redis://localhost:6379/0"),
@@ -212,35 +221,58 @@ def fetch_and_score_news(db: Session) -> None:
     redis_client.setex("current_sentiment", 900, json.dumps(payload))
 
 
+def _sentiment_fallback() -> dict:
+    return {
+        "panic_score": None,
+        "headlines": [],
+        "timestamp": None,
+    }
+
+
 @app.get("/api/sentiment")
 def get_sentiment(
     _background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict:
-    cached = redis_client.get("current_sentiment")
+    try:
+        cached = redis_client.get("current_sentiment")
+    except redis.RedisError:
+        return _sentiment_fallback()
+
     if cached is not None:
-        return json.loads(cached)
+        try:
+            return json.loads(cached)
+        except json.JSONDecodeError:
+            return _sentiment_fallback()
+
     try:
         fetch_and_score_news(db)
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
+    except (requests.RequestException, ValueError):
         db.rollback()
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    fresh = redis_client.get("current_sentiment")
+        return _sentiment_fallback()
+    except SQLAlchemyError:
+        db.rollback()
+        return _sentiment_fallback()
+
+    try:
+        fresh = redis_client.get("current_sentiment")
+    except redis.RedisError:
+        return _sentiment_fallback()
+
     if fresh is None:
-        raise HTTPException(
-            status_code=500,
-            detail="failed to persist sentiment after refresh",
-        )
-    return json.loads(fresh)
+        return _sentiment_fallback()
+    try:
+        return json.loads(fresh)
+    except json.JSONDecodeError:
+        return _sentiment_fallback()
 
 
 @app.get("/api/history", response_model=list[SentimentHistoryRead])
 def get_history(db: Session = Depends(get_db)):
-    rows = db.scalars(
-        select(SentimentHistory).order_by(SentimentHistory.timestamp.asc()),
-    ).all()
-    return rows
+    try:
+        rows = db.scalars(
+            select(SentimentHistory).order_by(SentimentHistory.timestamp.asc()),
+        ).all()
+        return list(rows)
+    except SQLAlchemyError:
+        return []
