@@ -1,120 +1,217 @@
-  "use client";
+"use client";
 
-  import {
-    ColorType,
-    createChart,
-    type IChartApi,
-    type UTCTimestamp,
-  } from "lightweight-charts";
-  import { useEffect, useRef } from "react";
-  import type { HistoryRow } from "@/lib/api";
+import {
+  ColorType,
+  createChart,
+  type CandlestickData,
+  type HistogramData,
+  type IChartApi,
+  type ISeriesApi,
+  type MouseEventParams,
+  type Time,
+  type UTCTimestamp,
+} from "lightweight-charts";
+import { useEffect, useRef, useState } from "react";
+import { API_BASE, parseHistoryPayload } from "@/lib/api";
 
-  interface AnalyticsChartProps {
-    history: HistoryRow[];
-    className?: string;
+type SpyCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+type TooltipState = {
+  visible: boolean;
+  x: number;
+  y: number;
+  headline: string;
+};
+
+interface AnalyticsChartProps {
+  className?: string;
+  history?: unknown;
+}
+
+function timeToUnixSeconds(time: Time): number | null {
+  if (typeof time === "number") {
+    return time;
   }
-
-  function toUtcTimestamp(iso: string): UTCTimestamp | null {
-    const t = Date.parse(iso);
-    if (Number.isNaN(t)) return null;
-    return Math.floor(t / 1000) as UTCTimestamp;
+  if ("year" in time && "month" in time && "day" in time) {
+    const millis = Date.UTC(time.year, time.month - 1, time.day);
+    return Math.floor(millis / 1000);
   }
+  return null;
+}
 
-  export function AnalyticsChart({ history, className = "" }: AnalyticsChartProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const chartRef = useRef<IChartApi | null>(null);
+function toUTCTimestamp(value: string): UTCTimestamp | null {
+  const millis = Date.parse(value);
+  if (Number.isNaN(millis)) {
+    return null;
+  }
+  return Math.floor(millis / 1000) as UTCTimestamp;
+}
 
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el) return;
+export function AnalyticsChart({ className = "" }: AnalyticsChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const historyHeadlineMapRef = useRef<Map<number, string>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<TooltipState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    headline: "",
+  });
 
-      const chart = createChart(el, {
-        layout: {
-          background: { type: ColorType.Solid, color: "#09090b" },
-          textColor: "#a1a1aa",
-          fontFamily: "ui-monospace, monospace",
-        },
-        grid: {
-          vertLines: { color: "#27272a" },
-          horzLines: { color: "#27272a" },
-        },
-        width: el.clientWidth,
-        height: 420,
-        rightPriceScale: {
-          borderColor: "#27272a",
-          scaleMargins: { top: 0.12, bottom: 0.28 },
-        },
-        leftPriceScale: {
-          borderColor: "#27272a",
-          visible: true,
-          scaleMargins: { top: 0.72, bottom: 0.02 },
-        },
-        timeScale: {
-          borderColor: "#27272a",
-          timeVisible: true,
-          secondsVisible: false,
-        },
-      });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) {
+      return;
+    }
 
-      const candle = chart.addCandlestickSeries({
-        upColor: "#f97316",
-        downColor: "#a1a1aa",
-        borderVisible: false,
-        wickUpColor: "#f97316",
-        wickDownColor: "#a1a1aa",
-        priceScaleId: "right",
-      });
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 460,
+      layout: {
+        background: { type: ColorType.Solid, color: "#09090b" },
+        textColor: "#71717a",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      },
+      grid: {
+        vertLines: { color: "#18181b" },
+        horzLines: { color: "#18181b" },
+      },
+      rightPriceScale: {
+        borderColor: "#27272a",
+        scaleMargins: { top: 0.08, bottom: 0.24 },
+      },
+      leftPriceScale: {
+        visible: false,
+      },
+      timeScale: {
+        borderColor: "#27272a",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        vertLine: { color: "#52525b" },
+        horzLine: { color: "#52525b" },
+      },
+    });
 
-      const area = chart.addAreaSeries({
-        lineColor: "#dc2626",
-        topColor: "rgba(220, 38, 38, 0.35)",
-        bottomColor: "rgba(220, 38, 38, 0)",
-        lineWidth: 2,
-        priceScaleId: "left",
-        priceFormat: { type: "price", precision: 2, minMove: 0.01 },
-      });
+    const candles = chart.addCandlestickSeries({
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      priceScaleId: "right",
+    });
 
-      chartRef.current = chart;
+    const panicHistogram = chart.addHistogramSeries({
+      priceScaleId: "panic",
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+      base: 0,
+    });
+    panicHistogram.priceScale().applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    });
 
-      const ro = new ResizeObserver(() => {
-        if (!containerRef.current || !chartRef.current) return;
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      });
-      ro.observe(el);
+    chartRef.current = chart;
+    candleSeriesRef.current = candles;
+    histogramSeriesRef.current = panicHistogram;
 
-      let cancelled = false;
+    const onCrosshairMove = (param: MouseEventParams<Time>) => {
+      if (!param.time || !param.point) {
+        setTooltip((prev) => ({ ...prev, visible: false }));
+        return;
+      }
 
-      async function load() {
-        const res = await fetch("/api/spy", { cache: "no-store" });
-        const json: unknown = await res.json();
-        const candles =
-          json &&
-          typeof json === "object" &&
-          "candles" in json &&
-          Array.isArray((json as { candles: unknown }).candles)
-            ? (json as { candles: unknown[] }).candles
-            : [];
+      const unixTime = timeToUnixSeconds(param.time);
+      if (unixTime === null) {
+        setTooltip((prev) => ({ ...prev, visible: false }));
+        return;
+      }
 
-        if (cancelled) return;
+      const headline = historyHeadlineMapRef.current.get(unixTime);
+      if (!headline) {
+        setTooltip((prev) => ({ ...prev, visible: false }));
+        return;
+      }
 
-        const candleData: {
-          time: UTCTimestamp;
-          open: number;
-          high: number;
-          low: number;
-          close: number;
-        }[] = [];
+      const maxX = el.clientWidth - 320;
+      const x = Math.min(Math.max(8, param.point.x + 16), Math.max(8, maxX));
+      const y = Math.max(8, param.point.y + 16);
+      setTooltip({ visible: true, x, y, headline });
+    };
 
-        for (const c of candles) {
-          if (c === null || typeof c !== "object") continue;
-          const o = c as Record<string, unknown>;
-          const time = o.time;
-          if (typeof time !== "number") continue;
-          const open = o.open;
-          const high = o.high;
-          const low = o.low;
-          const close = o.close;
+    chart.subscribeCrosshairMove(onCrosshairMove);
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (!containerRef.current || !chartRef.current) {
+        return;
+      }
+      chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+    });
+    resizeObserver.observe(el);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      histogramSeriesRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadData() {
+      if (!candleSeriesRef.current || !histogramSeriesRef.current || !chartRef.current) {
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const [spyRes, historyRes] = await Promise.all([
+          fetch("/api/spy", { cache: "no-store" }),
+          fetch(`${API_BASE}/api/history`, { cache: "no-store" }),
+        ]);
+
+        if (!spyRes.ok) {
+          throw new Error(`SPY feed failed (${spyRes.status})`);
+        }
+        if (!historyRes.ok) {
+          throw new Error(`History feed failed (${historyRes.status})`);
+        }
+
+        const spyJson: unknown = await spyRes.json();
+        const historyJson: unknown = await historyRes.json();
+
+        const rawSpy = Array.isArray(spyJson) ? spyJson : [];
+        const spyCandles: CandlestickData<UTCTimestamp>[] = [];
+        for (const item of rawSpy) {
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+          const row = item as Record<string, unknown>;
+          const time = row.time;
+          const open = row.open;
+          const high = row.high;
+          const low = row.low;
+          const close = row.close;
           if (
+            typeof time !== "number" ||
             typeof open !== "number" ||
             typeof high !== "number" ||
             typeof low !== "number" ||
@@ -122,7 +219,7 @@
           ) {
             continue;
           }
-          candleData.push({
+          spyCandles.push({
             time: time as UTCTimestamp,
             open,
             high,
@@ -130,38 +227,78 @@
             close,
           });
         }
+        spyCandles.sort((a, b) => a.time - b.time);
 
-        candleData.sort((a, b) => a.time - b.time);
-        candle.setData(candleData);
+        const historyRows = parseHistoryPayload(historyJson);
+        const panicBars: HistogramData<UTCTimestamp>[] = [];
+        const headlineMap = new Map<number, string>();
 
-        const panicData: { time: UTCTimestamp; value: number }[] = [];
-        for (const row of history) {
-          const tm = toUtcTimestamp(row.timestamp);
-          if (tm === null) continue;
-          panicData.push({ time: tm, value: row.panic_score });
+        for (const row of historyRows) {
+          const ts = toUTCTimestamp(row.timestamp);
+          if (ts === null) {
+            continue;
+          }
+          panicBars.push({
+            time: ts,
+            value: row.panic_score,
+            color: row.panic_score > 80 ? "#ef4444" : "rgba(113,113,122,0.5)",
+          });
+          headlineMap.set(ts, row.top_headline);
         }
-        panicData.sort((a, b) => a.time - b.time);
-        area.setData(panicData);
+        panicBars.sort((a, b) => a.time - b.time);
 
-        if (candleData.length > 0) {
-          chart.timeScale().fitContent();
+        if (!active) {
+          return;
+        }
+
+        historyHeadlineMapRef.current = headlineMap;
+        candleSeriesRef.current.setData(spyCandles);
+        histogramSeriesRef.current.setData(panicBars);
+        chartRef.current.timeScale().fitContent();
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : "Failed to load analytics data";
+        setError(message);
+      } finally {
+        if (active) {
+          setLoading(false);
         }
       }
+    }
 
-      void load();
+    void loadData();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-      return () => {
-        cancelled = true;
-        ro.disconnect();
-        chart.remove();
-        chartRef.current = null;
-      };
-    }, [history]);
+  return (
+    <div className={`relative w-full min-h-[460px] border border-zinc-800 bg-zinc-950 ${className}`}>
+      <div ref={containerRef} className="h-[460px] w-full" />
 
-    return (
-      <div
-        ref={containerRef}
-        className={`w-full min-h-[420px] border border-zinc-800 bg-zinc-950 ${className}`}
-      />
-    );
-  }
+      {tooltip.visible && (
+        <div
+          className="pointer-events-none absolute z-20 max-w-xs rounded border border-zinc-700 bg-zinc-900/95 p-2 font-mono text-xs text-zinc-200 shadow-xl"
+          style={{ left: tooltip.x, top: tooltip.y }}
+        >
+          {tooltip.headline}
+        </div>
+      )}
+
+      {loading && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/70 font-mono text-xs uppercase tracking-wider text-zinc-400">
+          Loading analytics...
+        </div>
+      )}
+
+      {error && (
+        <div className="absolute bottom-3 left-3 right-3 z-10 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 font-mono text-xs text-red-300">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}

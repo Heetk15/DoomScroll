@@ -3,78 +3,88 @@ import { NextResponse } from "next/server";
 type YahooChartResult = {
   chart?: {
     result?: Array<{
-      timestamp: number[];
+      timestamp?: number[];
       indicators?: {
         quote?: Array<{
-          open: (number | null)[];
-          high: (number | null)[];
-          low: (number | null)[];
-          close: (number | null)[];
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
         }>;
       };
     }>;
   };
 };
 
+type Candle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+const SPY_URL =
+  "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=5m&range=1d";
+
 export async function GET() {
   try {
-    const url =
-      "https://query1.finance.yahoo.com/v8/finance/chart/SPY?range=6mo&interval=1d";
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; DoomScroll/1.0)",
-      },
-      next: { revalidate: 300 },
+    const upstream = await fetch(SPY_URL, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; DoomScroll/1.0)" },
+      next: { revalidate: 60 },
     });
-    if (!res.ok) {
+
+    if (!upstream.ok) {
       return NextResponse.json(
-        { error: "upstream", candles: [] },
+        { error: "Failed to fetch SPY data from Yahoo Finance." },
         { status: 502 },
       );
     }
-    const data = (await res.json()) as YahooChartResult;
-    const result = data.chart?.result?.[0];
-    const ts = result?.timestamp;
-    const q = result?.indicators?.quote?.[0];
-    if (!ts || !q) {
-      return NextResponse.json({ candles: [] });
+
+    const json = (await upstream.json()) as YahooChartResult;
+    const result = json.chart?.result?.[0];
+    const timestamps = result?.timestamp ?? [];
+    const quote = result?.indicators?.quote?.[0];
+
+    if (!quote || timestamps.length === 0) {
+      return NextResponse.json([] satisfies Candle[]);
     }
 
-    const candles: {
-      time: number;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-    }[] = [];
+    const candles: Candle[] = [];
+    for (let i = 0; i < timestamps.length; i += 1) {
+      const time = timestamps[i];
+      const open = quote.open?.[i];
+      const high = quote.high?.[i];
+      const low = quote.low?.[i];
+      const close = quote.close?.[i];
 
-    for (let i = 0; i < ts.length; i++) {
-      const open = q.open[i];
-      const high = q.high[i];
-      const low = q.low[i];
-      const close = q.close[i];
       if (
-        open == null ||
-        high == null ||
-        low == null ||
-        close == null ||
-        !Number.isFinite(open + high + low + close)
+        typeof time !== "number" ||
+        typeof open !== "number" ||
+        typeof high !== "number" ||
+        typeof low !== "number" ||
+        typeof close !== "number"
       ) {
         continue;
       }
-      candles.push({
-        time: ts[i] as number,
-        open,
-        high,
-        low,
-        close,
-      });
+
+      if (
+        !Number.isFinite(time) ||
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) {
+        continue;
+      }
+
+      candles.push({ time, open, high, low, close });
     }
 
-    return NextResponse.json({ candles });
+    return NextResponse.json(candles);
   } catch {
     return NextResponse.json(
-      { error: "fetch_failed", candles: [] },
+      { error: "Unable to process SPY market data." },
       { status: 500 },
     );
   }

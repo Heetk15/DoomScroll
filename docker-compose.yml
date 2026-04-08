@@ -40,5 +40,19 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql+psycopg2://doom_user:doom_pass@db:5432/doomscroll_db
 
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: doomscroll_nextjs
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+
 volumes:
   doomscroll_pg_data:

@@ -9,7 +9,7 @@ import {
 } from "@/lib/api";
 import { PanicGauge } from "@/components/PanicGauge";
 
-const POLL_MS = 15_000;
+const POLL_MS = 60_000;
 
 interface SentimentMonitorProps {
   onPanicScore?: (score: number | null) => void;
