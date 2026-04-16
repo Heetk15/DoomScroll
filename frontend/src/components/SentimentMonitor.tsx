@@ -23,10 +23,12 @@ export function SentimentMonitor({
   const edge = alert ? "border-red-600" : "border-zinc-800";
   const [panicScore, setPanicScore] = useState<number | null>(null);
   const [headline, setHeadline] = useState<string>("NO DATA");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      setLoading(true);
       const res = await fetch(`${API_BASE}/api/sentiment`, {
         cache: "no-store",
       });
@@ -41,17 +43,19 @@ export function SentimentMonitor({
       const full = parseFullSentimentPayload(json);
       setError(null);
       setPanicScore(full.panic_score);
+      onPanicScore?.(full.panic_score);
       if (full.headlines.length > 0) {
         setHeadline(full.headlines[0]);
       } else {
         setHeadline("NO DATA");
       }
-      onPanicScore?.(full.panic_score);
     } catch {
       setError("UNAVAILABLE");
       setPanicScore(null);
       setHeadline("NO DATA");
       onPanicScore?.(null);
+    } finally {
+      setLoading(false);
     }
   }, [onPanicScore]);
 
@@ -77,6 +81,11 @@ export function SentimentMonitor({
 
       <div className="flex flex-1 flex-col items-center gap-4">
         <PanicGauge score={panicScore} alert={alert} />
+        {loading && (
+          <p className="font-mono text-xs uppercase tracking-wider text-zinc-600">
+            Synchronizing feed...
+          </p>
+        )}
         {error && (
           <p className="font-mono text-xs text-zinc-600">[{error}]</p>
         )}

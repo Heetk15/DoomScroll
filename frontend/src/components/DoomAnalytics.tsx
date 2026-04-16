@@ -44,7 +44,7 @@ export function DoomAnalytics({ alert = false }: DoomAnalyticsProps) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/history`, { cache: "no-store" });
+      const res = await fetch(`${API_BASE}/api/history?ticker=ALL`, { cache: "no-store" });
       if (!res.ok) {
         setFetchError(`HTTP ${res.status}`);
         setRows([]);

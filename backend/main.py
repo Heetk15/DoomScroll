@@ -2,17 +2,17 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Float, String, DateTime, Integer, create_engine, select
+from sqlalchemy import DateTime, Float, Integer, String, create_engine, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 load_dotenv()
 
@@ -34,15 +34,36 @@ class SentimentHistory(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     panic_score: Mapped[float] = mapped_column(Float, nullable=False)
     top_headline: Mapped[str] = mapped_column(String(2000), nullable=False)
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False, default="ALL", server_default="ALL")
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
     )
 
 
+def ensure_history_schema() -> None:
+    inspector = inspect(engine)
+    try:
+        columns = {column["name"] for column in inspector.get_columns("sentiment_history")}
+    except SQLAlchemyError:
+        return
+
+    if "ticker" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE sentiment_history "
+                "ADD COLUMN ticker VARCHAR(32) NOT NULL DEFAULT 'ALL'",
+            ),
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_history_schema()
     yield
 
 
@@ -62,10 +83,14 @@ redis_client = redis.Redis.from_url(
 )
 
 FINNHUB_NEWS_URL = "https://finnhub.io/api/v1/news"
+FINNHUB_COMPANY_NEWS_URL = "https://finnhub.io/api/v1/company-news"
 HF_FINBERT_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
 HEADLINE_LIMIT = 10
 HF_MAX_ATTEMPTS = 6
 HF_RETRY_BASE_SEC = 5.0
+CACHE_TTL_SECONDS = 900
+COMPANY_NEWS_LOOKBACK_DAYS = 7
+WATCHLIST = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD"]
 
 
 def get_db():
@@ -82,7 +107,14 @@ class SentimentHistoryRead(BaseModel):
     id: int
     panic_score: float
     top_headline: str
+    ticker: str
     timestamp: datetime
+
+
+class ScreenerItem(BaseModel):
+    ticker: str
+    panic_score: float | None
+    top_headline: str
 
 
 def _require_env(name: str) -> str:
@@ -92,17 +124,21 @@ def _require_env(name: str) -> str:
     return value
 
 
-def fetch_general_headlines() -> list[str]:
-    token = _require_env("FINNHUB_API_KEY")
-    response = requests.get(
-        FINNHUB_NEWS_URL,
-        params={"category": "general", "token": token},
-        timeout=30,
-    )
-    response.raise_for_status()
-    articles = response.json()
+def normalize_ticker(raw_ticker: str | None) -> str:
+    candidate = (raw_ticker or "ALL").strip().upper()
+    if not candidate:
+        return "ALL"
+    return candidate
+
+
+def _cache_key_for_ticker(ticker: str) -> str:
+    return f"current_sentiment:{ticker}"
+
+
+def _extract_headlines_from_articles(articles: object) -> list[str]:
     if not isinstance(articles, list):
         raise ValueError("unexpected Finnhub response shape")
+
     headlines: list[str] = []
     for item in articles:
         if not isinstance(item, dict):
@@ -112,8 +148,35 @@ def fetch_general_headlines() -> list[str]:
             headlines.append(headline.strip())
         if len(headlines) >= HEADLINE_LIMIT:
             break
+    return headlines
+
+
+def fetch_headlines(ticker: str) -> list[str]:
+    token = _require_env("FINNHUB_API_KEY")
+    if ticker == "ALL":
+        response = requests.get(
+            FINNHUB_NEWS_URL,
+            params={"category": "general", "token": token},
+            timeout=30,
+        )
+    else:
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=COMPANY_NEWS_LOOKBACK_DAYS)
+        response = requests.get(
+            FINNHUB_COMPANY_NEWS_URL,
+            params={
+                "symbol": ticker,
+                "from": start_date.isoformat(),
+                "to": end_date.isoformat(),
+                "token": token,
+            },
+            timeout=30,
+        )
+
+    response.raise_for_status()
+    headlines = _extract_headlines_from_articles(response.json())
     if not headlines:
-        raise ValueError("no headlines returned from Finnhub for category general")
+        raise ValueError(f"no headlines returned from Finnhub for ticker {ticker}")
     return headlines
 
 
@@ -195,9 +258,32 @@ def score_headline_finbert(text: str, hf_token: str) -> float:
     raise ValueError(f"FinBERT unavailable after retries: {last_error}")
 
 
-def fetch_and_score_news(db: Session) -> None:
+def _write_sentiment_cache(payload: dict, ticker: str) -> None:
+    try:
+        redis_client.setex(_cache_key_for_ticker(ticker), CACHE_TTL_SECONDS, json.dumps(payload))
+    except redis.RedisError:
+        pass
+
+
+def _read_sentiment_cache(ticker: str) -> dict | None:
+    try:
+        cached = redis_client.get(_cache_key_for_ticker(ticker))
+    except redis.RedisError:
+        return None
+    if cached is None:
+        return None
+    try:
+        payload = json.loads(cached)
+        if not isinstance(payload, dict):
+            return None
+        return payload
+    except json.JSONDecodeError:
+        return None
+
+
+def fetch_and_score_news(db: Session, ticker: str) -> dict:
     hf_token = _require_env("HUGGINGFACE_TOKEN")
-    headlines = fetch_general_headlines()
+    headlines = fetch_headlines(ticker)
     line_scores: list[float] = []
     for headline in headlines:
         line_scores.append(score_headline_finbert(headline, hf_token))
@@ -209,70 +295,100 @@ def fetch_and_score_news(db: Session) -> None:
     record = SentimentHistory(
         panic_score=panic_score,
         top_headline=top_headline,
+        ticker=ticker,
         timestamp=recorded_at,
     )
     db.add(record)
     db.commit()
+    db.refresh(record)
     payload = {
+        "ticker": ticker,
         "panic_score": panic_score,
         "headlines": headlines,
+        "top_headline": top_headline,
         "timestamp": recorded_at.timestamp(),
     }
-    redis_client.setex("current_sentiment", 900, json.dumps(payload))
+    _write_sentiment_cache(payload, ticker)
+    return payload
 
 
 def _sentiment_fallback() -> dict:
     return {
+        "ticker": "ALL",
         "panic_score": None,
         "headlines": [],
+        "top_headline": "",
         "timestamp": None,
     }
 
 
 @app.get("/api/sentiment")
 def get_sentiment(
-    _background_tasks: BackgroundTasks,
+    ticker: str = Query(default="ALL", description="Ticker symbol like TSLA, AAPL, or ALL for market-wide sentiment"),
     db: Session = Depends(get_db),
 ) -> dict:
-    try:
-        cached = redis_client.get("current_sentiment")
-    except redis.RedisError:
-        return _sentiment_fallback()
+    normalized_ticker = normalize_ticker(ticker)
 
+    cached = _read_sentiment_cache(normalized_ticker)
     if cached is not None:
-        try:
-            return json.loads(cached)
-        except json.JSONDecodeError:
-            return _sentiment_fallback()
+        return cached
 
     try:
-        fetch_and_score_news(db)
+        return fetch_and_score_news(db, normalized_ticker)
     except (requests.RequestException, ValueError):
         db.rollback()
-        return _sentiment_fallback()
+        fallback = _sentiment_fallback()
+        fallback["ticker"] = normalized_ticker
+        return fallback
     except SQLAlchemyError:
         db.rollback()
-        return _sentiment_fallback()
+        fallback = _sentiment_fallback()
+        fallback["ticker"] = normalized_ticker
+        return fallback
 
-    try:
-        fresh = redis_client.get("current_sentiment")
-    except redis.RedisError:
-        return _sentiment_fallback()
 
-    if fresh is None:
-        return _sentiment_fallback()
-    try:
-        return json.loads(fresh)
-    except json.JSONDecodeError:
-        return _sentiment_fallback()
+@app.get("/api/screener", response_model=list[ScreenerItem])
+def get_screener(db: Session = Depends(get_db)) -> list[ScreenerItem]:
+    items: list[ScreenerItem] = []
+
+    for ticker in WATCHLIST:
+        normalized_ticker = normalize_ticker(ticker)
+        cached = _read_sentiment_cache(normalized_ticker)
+        if cached is None:
+            try:
+                cached = fetch_and_score_news(db, normalized_ticker)
+            except (requests.RequestException, ValueError, SQLAlchemyError):
+                db.rollback()
+                cached = {
+                    "ticker": normalized_ticker,
+                    "panic_score": None,
+                    "top_headline": "",
+                    "headlines": [],
+                    "timestamp": None,
+                }
+
+        items.append(
+            ScreenerItem(
+                ticker=normalized_ticker,
+                panic_score=cached.get("panic_score"),
+                top_headline=str(cached.get("top_headline", "")),
+            ),
+        )
+
+    return items
 
 
 @app.get("/api/history", response_model=list[SentimentHistoryRead])
-def get_history(db: Session = Depends(get_db)):
+def get_history(
+    ticker: str = Query(default="ALL", description="Ticker symbol filter, or ALL for market-wide history"),
+    db: Session = Depends(get_db),
+):
+    normalized_ticker = normalize_ticker(ticker)
     try:
-        rows = db.scalars(
-            select(SentimentHistory).order_by(SentimentHistory.timestamp.asc()),
-        ).all()
+        stmt = select(SentimentHistory)
+        if normalized_ticker != "ALL":
+            stmt = stmt.where(SentimentHistory.ticker == normalized_ticker)
+        rows = db.scalars(stmt.order_by(SentimentHistory.timestamp.asc())).all()
         return list(rows)
     except SQLAlchemyError:
         return []

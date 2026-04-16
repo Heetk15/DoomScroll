@@ -30,8 +30,17 @@ type TooltipState = {
 };
 
 interface AnalyticsChartProps {
+  ticker: string;
   className?: string;
   history?: unknown;
+}
+
+function normalizeTicker(rawTicker: string): string {
+  const normalized = rawTicker.trim().toUpperCase();
+  if (!normalized || normalized === "ALL") {
+    return "SPY";
+  }
+  return normalized;
 }
 
 function timeToUnixSeconds(time: Time): number | null {
@@ -53,7 +62,7 @@ function toUTCTimestamp(value: string): UTCTimestamp | null {
   return Math.floor(millis / 1000) as UTCTimestamp;
 }
 
-export function AnalyticsChart({ className = "" }: AnalyticsChartProps) {
+export function AnalyticsChart({ ticker, className = "" }: AnalyticsChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -67,6 +76,7 @@ export function AnalyticsChart({ className = "" }: AnalyticsChartProps) {
     y: 0,
     headline: "",
   });
+  const activeTicker = normalizeTicker(ticker);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -181,18 +191,23 @@ export function AnalyticsChart({ className = "" }: AnalyticsChartProps) {
 
       setLoading(true);
       setError(null);
+      setTooltip({ visible: false, x: 0, y: 0, headline: "" });
+
+      historyHeadlineMapRef.current = new Map();
+      candleSeriesRef.current.setData([]);
+      histogramSeriesRef.current.setData([]);
 
       try {
         const [spyRes, historyRes] = await Promise.all([
-          fetch("/api/spy", { cache: "no-store" }),
-          fetch(`${API_BASE}/api/history`, { cache: "no-store" }),
+          fetch(`/api/quote/${encodeURIComponent(activeTicker)}`, { cache: "no-store" }),
+          fetch(`${API_BASE}/api/history?ticker=${encodeURIComponent(activeTicker)}`, { cache: "no-store" }),
         ]);
 
         if (!spyRes.ok) {
-          throw new Error(`SPY feed failed (${spyRes.status})`);
+          throw new Error(`${activeTicker} feed failed (${spyRes.status})`);
         }
         if (!historyRes.ok) {
-          throw new Error(`History feed failed (${historyRes.status})`);
+          throw new Error(`${activeTicker} history feed failed (${historyRes.status})`);
         }
 
         const spyJson: unknown = await spyRes.json();
@@ -273,10 +288,15 @@ export function AnalyticsChart({ className = "" }: AnalyticsChartProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeTicker]);
 
   return (
     <div className={`relative w-full min-h-[460px] border border-zinc-800 bg-zinc-950 ${className}`}>
+      <div className="border-b border-zinc-800 px-3 py-2">
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          Alpha Chart Engine / {activeTicker}
+        </p>
+      </div>
       <div ref={containerRef} className="h-[460px] w-full" />
 
       {tooltip.visible && (

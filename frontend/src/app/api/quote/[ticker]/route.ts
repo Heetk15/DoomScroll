@@ -24,19 +24,30 @@ type Candle = {
   close: number;
 };
 
-const SPY_URL =
-  "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=5m&range=1d";
+function normalizeTicker(rawTicker: string): string {
+  const normalized = rawTicker.trim().toUpperCase();
+  if (!normalized || normalized === "ALL") {
+    return "SPY";
+  }
+  return normalized;
+}
 
-export async function GET() {
+export async function GET(
+  _request: Request,
+  context: { params: { ticker: string } },
+) {
+  const resolvedTicker = normalizeTicker(context.params.ticker);
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(resolvedTicker)}?interval=5m&range=1d`;
+
   try {
-    const upstream = await fetch(SPY_URL, {
+    const upstream = await fetch(yahooUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; DoomScroll/1.0)" },
       next: { revalidate: 60 },
     });
 
     if (!upstream.ok) {
       return NextResponse.json(
-        { error: "Failed to fetch SPY data from Yahoo Finance." },
+        { error: `Failed to fetch ${resolvedTicker} data from Yahoo Finance.` },
         { status: 502 },
       );
     }
@@ -84,7 +95,7 @@ export async function GET() {
     return NextResponse.json(candles);
   } catch {
     return NextResponse.json(
-      { error: "Unable to process SPY market data." },
+      { error: `Unable to process ${resolvedTicker} market data.` },
       { status: 500 },
     );
   }

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, LayoutDashboard, Share2, Shield } from "lucide-react";
+import { Activity, LayoutDashboard, Share2, Shield, Table2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { LiveClock } from "@/components/LiveClock";
 
 const NAV = [
   { href: "/", label: "Live monitor", Icon: LayoutDashboard },
   { href: "/analytics", label: "Analytics", Icon: Activity },
+  { href: "/screener", label: "Screener", Icon: Table2 },
   { href: "/nodes", label: "Contagion web", Icon: Share2 },
 ] as const;
 

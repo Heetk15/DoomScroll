@@ -4,7 +4,16 @@ import { motion } from "framer-motion";
 
 const CX = 100;
 const CY = 100;
-const NEEDLE_LEN = 72;
+const NEEDLE_LEN = 70;
+const ARC_RADIUS = 76;
+
+const ZONE_COLORS = [
+  "rgb(16 185 129)",
+  "rgb(52 211 153)",
+  "rgb(113 113 122)",
+  "rgb(249 115 22)",
+  "rgb(220 38 38)",
+];
 
 interface PanicGaugeProps {
   score: number | null;
@@ -15,6 +24,35 @@ interface PanicGaugeProps {
 function needleRotateDeg(score: number): number {
   const s = Math.min(100, Math.max(0, score));
   return 180 * (1 - s / 100);
+}
+
+function polarPoint(cx: number, cy: number, radius: number, angleDeg: number) {
+  const rad = (Math.PI / 180) * angleDeg;
+  return {
+    x: cx + radius * Math.cos(rad),
+    y: cy + radius * Math.sin(rad),
+  };
+}
+
+function arcPath(startDeg: number, endDeg: number) {
+  const start = polarPoint(CX, CY, ARC_RADIUS, startDeg);
+  const end = polarPoint(CX, CY, ARC_RADIUS, endDeg);
+  return `M ${start.x} ${start.y} A ${ARC_RADIUS} ${ARC_RADIUS} 0 0 1 ${end.x} ${end.y}`;
+}
+
+function scoreColor(score: number | null, alert: boolean): string {
+  if (alert) {
+    return "rgb(220 38 38)";
+  }
+  if (score === null || !Number.isFinite(score)) {
+    return "rgb(161 161 170)";
+  }
+  const s = Math.min(100, Math.max(0, score));
+  if (s <= 20) return ZONE_COLORS[0];
+  if (s <= 40) return ZONE_COLORS[1];
+  if (s <= 60) return ZONE_COLORS[2];
+  if (s <= 80) return ZONE_COLORS[3];
+  return ZONE_COLORS[4];
 }
 
 export function PanicGauge({
@@ -29,6 +67,8 @@ export function PanicGauge({
 
   const displayScore =
     score !== null && Number.isFinite(score) ? score.toFixed(2) : "—";
+
+  const needleColor = scoreColor(score, alert);
 
   return (
     <div className={`relative flex flex-col items-center ${className}`}>
@@ -60,12 +100,38 @@ export function PanicGauge({
           className="block"
           aria-hidden
         >
-          <path
-            d="M 24 100 A 76 76 0 0 1 176 100"
-            fill="none"
-            stroke="rgb(39 39 42)"
-            strokeWidth="2"
-          />
+          {ZONE_COLORS.map((color, idx) => {
+            const start = 180 - idx * 36;
+            const end = 180 - (idx + 1) * 36;
+            return (
+              <path
+                key={color}
+                d={arcPath(start, end)}
+                fill="none"
+                stroke={color}
+                strokeWidth="8"
+                strokeLinecap="butt"
+              />
+            );
+          })}
+
+          {Array.from({ length: 6 }).map((_, idx) => {
+            const angle = 180 - idx * 36;
+            const outer = polarPoint(CX, CY, ARC_RADIUS + 2, angle);
+            const inner = polarPoint(CX, CY, ARC_RADIUS - 10, angle);
+            return (
+              <line
+                key={`tick-${idx}`}
+                x1={outer.x}
+                y1={outer.y}
+                x2={inner.x}
+                y2={inner.y}
+                stroke="rgb(63 63 70)"
+                strokeWidth="1"
+              />
+            );
+          })}
+
           <line
             x1="24"
             y1="100"
@@ -116,7 +182,7 @@ export function PanicGauge({
                 y1={0}
                 x2={NEEDLE_LEN}
                 y2={0}
-                stroke={alert ? "rgb(220 38 38)" : "rgb(249 115 22)"}
+                stroke={needleColor}
                 strokeWidth="2"
                 strokeLinecap="square"
               />
@@ -134,7 +200,7 @@ export function PanicGauge({
       </motion.div>
       <p className="mt-3 font-mono text-xs tabular-nums text-zinc-500">
         SCORE{" "}
-        <span className={alert ? "text-red-500" : "text-[#f97316]"}>
+        <span style={{ color: needleColor }}>
           {displayScore}
         </span>
       </p>
