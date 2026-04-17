@@ -62,12 +62,33 @@ function toUTCTimestamp(value: string): UTCTimestamp | null {
   return Math.floor(millis / 1000) as UTCTimestamp;
 }
 
+function dedupeStrictAscending<T extends { time: UTCTimestamp }>(rows: T[]): T[] {
+  const sorted = [...rows].sort((a, b) => a.time - b.time);
+  const unique: T[] = [];
+  let lastTime: number | null = null;
+
+  for (const row of sorted) {
+    const t = row.time as number;
+    if (!Number.isFinite(t)) {
+      continue;
+    }
+    if (lastTime !== null && t <= lastTime) {
+      continue;
+    }
+    unique.push(row);
+    lastTime = t;
+  }
+
+  return unique;
+}
+
 export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const historyHeadlineMapRef = useRef<Map<number, string>>(new Map());
+  const [chartReady, setChartReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<TooltipState>({
@@ -136,6 +157,7 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
     chartRef.current = chart;
     candleSeriesRef.current = candles;
     histogramSeriesRef.current = panicHistogram;
+    setChartReady(true);
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (!param.time || !param.point) {
@@ -178,14 +200,21 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
       chartRef.current = null;
       candleSeriesRef.current = null;
       histogramSeriesRef.current = null;
+      setChartReady(false);
     };
   }, []);
 
   useEffect(() => {
+    if (!chartReady) {
+      return;
+    }
+
     let active = true;
+    const controller = new AbortController();
 
     async function loadData() {
       if (!candleSeriesRef.current || !histogramSeriesRef.current || !chartRef.current) {
+        setLoading(false);
         return;
       }
 
@@ -199,8 +228,14 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
 
       try {
         const [spyRes, historyRes] = await Promise.all([
-          fetch(`/api/quote/${encodeURIComponent(activeTicker)}`, { cache: "no-store" }),
-          fetch(`${API_BASE}/api/history?ticker=${encodeURIComponent(activeTicker)}`, { cache: "no-store" }),
+          fetch(`/api/quote/${encodeURIComponent(activeTicker)}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+          fetch(`${API_BASE}/api/history?ticker=${encodeURIComponent(activeTicker)}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
         ]);
 
         if (!spyRes.ok) {
@@ -242,7 +277,8 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
             close,
           });
         }
-        spyCandles.sort((a, b) => a.time - b.time);
+        // Sanitize market data
+        const uniqueSpy = dedupeStrictAscending(spyCandles);
 
         const historyRows = parseHistoryPayload(historyJson);
         const panicBars: HistogramData<UTCTimestamp>[] = [];
@@ -260,18 +296,26 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
           });
           headlineMap.set(ts, row.top_headline);
         }
-        panicBars.sort((a, b) => a.time - b.time);
+        // Sanitize panic history
+        const uniquePanic = dedupeStrictAscending(panicBars);
 
         if (!active) {
           return;
         }
 
         historyHeadlineMapRef.current = headlineMap;
-        candleSeriesRef.current.setData(spyCandles);
-        histogramSeriesRef.current.setData(panicBars);
-        chartRef.current.timeScale().fitContent();
+        candleSeriesRef.current.setData(uniqueSpy);
+        histogramSeriesRef.current.setData(uniquePanic);
+
+        // Fit content if we have data, otherwise just stop loading
+        if (uniqueSpy.length > 0) {
+          chartRef.current.timeScale().fitContent();
+        }
       } catch (err) {
         if (!active) {
+          return;
+        }
+        if (err instanceof Error && err.name === "AbortError") {
           return;
         }
         const message =
@@ -287,8 +331,9 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
     void loadData();
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [activeTicker]);
+  }, [activeTicker, chartReady]);
 
   return (
     <div className={`relative w-full min-h-[460px] border border-zinc-800 bg-zinc-950 ${className}`}>

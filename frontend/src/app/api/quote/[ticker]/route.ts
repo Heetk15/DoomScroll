@@ -9,9 +9,15 @@ export async function GET(
   
   try {
     // 2. Fetch data from Yahoo Finance
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=5m&range=1d`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=5m&range=5d`;
     const res = await fetch(url, { 
-      headers: { "User-Agent": "Mozilla/5.0" }, 
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/"
+      }, 
       cache: "no-store" 
     });
     
