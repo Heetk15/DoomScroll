@@ -2,29 +2,54 @@
 
 import { motion } from "framer-motion";
 import { Activity, Radio } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   API_BASE,
+  type HistoryRow,
   parseFullSentimentPayload,
 } from "@/lib/api";
+import { type TimelineOption } from "@/lib/timeline";
 import { PanicGauge } from "@/components/PanicGauge";
 
 const POLL_MS = 60_000;
 
 interface SentimentMonitorProps {
   onPanicScore?: (score: number | null) => void;
-  alert?: boolean;
+  timeline: TimelineOption;
+  history: HistoryRow[];
 }
 
 export function SentimentMonitor({
   onPanicScore,
-  alert = false,
+  timeline,
+  history,
 }: SentimentMonitorProps) {
-  const edge = alert ? "border-red-600" : "border-zinc-800";
   const [panicScore, setPanicScore] = useState<number | null>(null);
   const [headline, setHeadline] = useState<string>("NO DATA");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const signal = useMemo(() => {
+    if (panicScore !== null && Number.isFinite(panicScore) && panicScore >= 60) {
+      return {
+        text: "CONTRARIAN BUY SIGNAL",
+        classes: "text-red-300",
+      };
+    }
+    if (panicScore !== null && Number.isFinite(panicScore) && panicScore <= 40) {
+      return {
+        text: "CONTRARIAN SELL SIGNAL",
+        classes: "text-emerald-300",
+      };
+    }
+    return {
+      text: "MARKET NEUTRAL",
+      classes: "text-zinc-400",
+    };
+  }, [panicScore]);
+
+  const gaugeAlert = panicScore !== null && Number.isFinite(panicScore) && panicScore >= 60;
+  const edge = gaugeAlert ? "border-red-600" : "border-zinc-800";
 
   const load = useCallback(async () => {
     try {
@@ -70,17 +95,22 @@ export function SentimentMonitor({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.25 }}
-      className={`flex h-full min-h-[280px] flex-col border bg-zinc-950 p-6 ${edge}`}
+      className={`flex h-full min-h-[250px] flex-col border bg-zinc-950 p-4 lg:min-h-0 ${edge}`}
     >
-      <div className="mb-4 flex items-center gap-2 text-zinc-500">
+      <div className="mb-3 flex items-center gap-2 text-zinc-500">
         <Radio className="h-4 w-4" strokeWidth={1.5} aria-hidden />
         <span className="text-xs uppercase tracking-[0.2em]">
           Live sentiment
         </span>
       </div>
 
-      <div className="flex flex-1 flex-col items-center gap-4">
-        <PanicGauge score={panicScore} alert={alert} />
+      <div className="flex flex-1 flex-col gap-3">
+        <div className="mx-auto w-full max-w-xs">
+          <PanicGauge value={panicScore} min={0} max={100} />
+        </div>
+        <p className={`text-center font-mono text-xs uppercase tracking-[0.24em] ${signal.classes}`}>
+          {signal.text}
+        </p>
         {loading && (
           <p className="font-mono text-xs uppercase tracking-wider text-zinc-600">
             Synchronizing feed...
@@ -99,11 +129,16 @@ export function SentimentMonitor({
       </div>
 
       <div
-        className={`mt-6 flex items-center gap-2 border-t pt-4 text-zinc-600 ${edge}`}
+        className={`mt-4 flex items-center justify-between gap-2 border-t pt-3 text-zinc-600 ${edge}`}
       >
-        <Activity className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />
-        <span className="font-mono text-[10px] uppercase tracking-wider">
-          Interval {POLL_MS / 1000}s
+        <span className="flex items-center gap-2">
+          <Activity className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />
+          <span className="font-mono text-[10px] uppercase tracking-wider">
+            Interval {POLL_MS / 1000}s
+          </span>
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+          {timeline} / {history.length}
         </span>
       </div>
     </motion.section>

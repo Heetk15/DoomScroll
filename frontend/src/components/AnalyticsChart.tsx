@@ -30,7 +30,7 @@ type TooltipState = {
 };
 
 interface AnalyticsChartProps {
-  ticker: string;
+  ticker?: string;
   className?: string;
   history?: unknown;
 }
@@ -62,7 +62,7 @@ function toUTCTimestamp(value: string): UTCTimestamp | null {
   return Math.floor(millis / 1000) as UTCTimestamp;
 }
 
-export function AnalyticsChart({ ticker, className = "" }: AnalyticsChartProps) {
+export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -193,9 +193,9 @@ export function AnalyticsChart({ ticker, className = "" }: AnalyticsChartProps) 
       setError(null);
       setTooltip({ visible: false, x: 0, y: 0, headline: "" });
 
-      historyHeadlineMapRef.current = new Map();
       candleSeriesRef.current.setData([]);
       histogramSeriesRef.current.setData([]);
+      historyHeadlineMapRef.current.clear();
 
       try {
         const [spyRes, historyRes] = await Promise.all([

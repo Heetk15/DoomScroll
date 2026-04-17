@@ -1,10 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { API_BASE, parseHistoryPayload, type HistoryRow } from "@/lib/api";
-
-const FEED_POLL_MS = 60_000;
+import { useMemo } from "react";
+import { type HistoryRow } from "@/lib/api";
+import { TIMELINE_OPTIONS, type TimelineOption } from "@/lib/timeline";
 
 const listVariants = {
   show: {
@@ -44,54 +43,71 @@ function byNewest(a: HistoryRow, b: HistoryRow): number {
   return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
 }
 
-export function RawIntelFeed() {
-  const [rows, setRows] = useState<HistoryRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
-  const [nowTs, setNowTs] = useState<number>(Date.now());
+function byPanicDesc(a: HistoryRow, b: HistoryRow): number {
+  return b.panic_score - a.panic_score;
+}
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`${API_BASE}/api/history?ticker=ALL`, {
-        cache: "no-store",
+interface RawIntelFeedProps {
+  timeline: TimelineOption;
+  setTimeline: (timeline: TimelineOption) => void;
+  history: HistoryRow[];
+  loading: boolean;
+  error: string | null;
+  lastRefreshAt: number | null;
+  nowTs: number;
+}
+
+export function RawIntelFeed({
+  timeline,
+  setTimeline,
+  history,
+  loading,
+  error,
+  lastRefreshAt,
+  nowTs,
+}: RawIntelFeedProps) {
+  const renderedRows = useMemo(() => {
+    const clone = [...history];
+    if (timeline === "24H") {
+      clone.sort(byNewest);
+    } else {
+      clone.sort((a, b) => {
+        const panicDiff = byPanicDesc(a, b);
+        if (panicDiff !== 0) {
+          return panicDiff;
+        }
+        return byNewest(a, b);
       });
-      if (!res.ok) {
-        setError(`HTTP ${res.status}`);
-        setRows([]);
-        return;
-      }
-      const payload: unknown = await res.json();
-      setRows(parseHistoryPayload(payload));
-      setLastRefreshAt(Date.now());
-      setError(null);
-    } catch {
-      setError("UNAVAILABLE");
-      setRows([]);
-    } finally {
-      setLoading(false);
     }
-  }, []);
+    return clone.slice(0, 10);
+  }, [history, timeline]);
 
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), FEED_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [load]);
+  const timelinePanicScore = useMemo(() => {
+    if (history.length === 0) {
+      return null;
+    }
+    const total = history.reduce((sum, row) => sum + row.panic_score, 0);
+    return total / history.length;
+  }, [history]);
 
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setNowTs(Date.now());
-    }, 1_000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const sortedRows = useMemo(() => {
-    const clone = [...rows];
-    clone.sort(byNewest);
-    return clone;
-  }, [rows]);
+  const signalBanner = useMemo(() => {
+    if (timelinePanicScore !== null && timelinePanicScore >= 80) {
+      return {
+        text: "[!] SYSTEM ALERT: PEAK PANIC DETECTED. CONTRARIAN BUY SIGNAL GENERATED.",
+        classes: "border-red-700 bg-red-950/60 text-red-300",
+      };
+    }
+    if (timelinePanicScore !== null && timelinePanicScore <= 20) {
+      return {
+        text: "[!] SYSTEM ALERT: EXTREME GREED DETECTED. CONTRARIAN SELL SIGNAL GENERATED.",
+        classes: "border-emerald-700 bg-emerald-950/40 text-emerald-300",
+      };
+    }
+    return {
+      text: "[i] SYSTEM STATUS: MARKET SENTIMENT NORMAL.",
+      classes: "border-zinc-800 bg-zinc-900/40 text-zinc-400",
+    };
+  }, [timelinePanicScore]);
 
   const refreshLabel = useMemo(() => {
     if (loading && lastRefreshAt === null) {
@@ -113,18 +129,45 @@ export function RawIntelFeed() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="flex h-full min-h-[520px] flex-col border border-zinc-800 bg-zinc-950"
+      className="flex h-full flex-col overflow-hidden border border-zinc-800 bg-zinc-950"
     >
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">
           Raw Intel Feed
         </h2>
         <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600">
-          LIVE / ALL / {refreshLabel}
+          LIVE / {timeline} / {refreshLabel}
         </span>
       </div>
 
-      <div className="h-full overflow-y-auto px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2">
+        {TIMELINE_OPTIONS.map((option) => {
+          const active = timeline === option;
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setTimeline(option)}
+              className={`border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                active
+                  ? "border-zinc-500 bg-zinc-800 text-zinc-100"
+                  : "border-zinc-700 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+              }`}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className={`mx-4 mt-3 border px-3 py-2 font-mono text-[10px] uppercase tracking-wide ${signalBanner.classes}`}>
+        {signalBanner.text}
+        {timelinePanicScore !== null && (
+          <span className="ml-2 text-zinc-200">[{timelinePanicScore.toFixed(1)}]</span>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {loading && (
           <div className="space-y-3">
             {Array.from({ length: 6 }).map((_, idx) => (
@@ -142,20 +185,20 @@ export function RawIntelFeed() {
           </div>
         )}
 
-        {!loading && !error && sortedRows.length === 0 && (
+        {!loading && !error && renderedRows.length === 0 && (
           <div className="border border-zinc-800 bg-zinc-900/30 p-3 font-mono text-xs text-zinc-500">
             NO RECORDS RECEIVED
           </div>
         )}
 
-        {!loading && !error && sortedRows.length > 0 && (
+        {!loading && !error && renderedRows.length > 0 && (
           <motion.ul
             initial="hidden"
             animate="show"
             variants={listVariants}
             className="space-y-3"
           >
-            {sortedRows.map((row) => (
+            {renderedRows.map((row) => (
               <motion.li
                 key={row.id}
                 variants={rowVariants}

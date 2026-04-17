@@ -1,102 +1,54 @@
 import { NextResponse } from "next/server";
 
-type YahooChartResult = {
-  chart?: {
-    result?: Array<{
-      timestamp?: number[];
-      indicators?: {
-        quote?: Array<{
-          open?: Array<number | null>;
-          high?: Array<number | null>;
-          low?: Array<number | null>;
-          close?: Array<number | null>;
-        }>;
-      };
-    }>;
-  };
-};
-
-type Candle = {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-};
-
-function normalizeTicker(rawTicker: string): string {
-  const normalized = rawTicker.trim().toUpperCase();
-  if (!normalized || normalized === "ALL") {
-    return "SPY";
-  }
-  return normalized;
-}
-
 export async function GET(
-  _request: Request,
-  context: { params: { ticker: string } },
+  request: Request,
+  { params }: { params: { ticker: string } }
 ) {
-  const resolvedTicker = normalizeTicker(context.params.ticker);
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(resolvedTicker)}?interval=5m&range=1d`;
-
+  // 1. Extract and normalize the ticker
+  const ticker = params.ticker === "ALL" || !params.ticker ? "SPY" : params.ticker.toUpperCase();
+  
   try {
-    const upstream = await fetch(yahooUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; DoomScroll/1.0)" },
-      next: { revalidate: 60 },
+    // 2. Fetch data from Yahoo Finance
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=5m&range=1d`;
+    const res = await fetch(url, { 
+      headers: { "User-Agent": "Mozilla/5.0" }, 
+      cache: "no-store" 
     });
-
-    if (!upstream.ok) {
-      return NextResponse.json(
-        { error: `Failed to fetch ${resolvedTicker} data from Yahoo Finance.` },
-        { status: 502 },
-      );
+    
+    if (!res.ok) {
+      throw new Error(`Yahoo Finance API failed with status: ${res.status}`);
+    }
+    
+    const data = await res.json();
+    
+    // 3. Safely extract arrays from Yahoo's deeply nested JSON
+    const result = data.chart?.result?.[0];
+    if (!result || !result.timestamp || !result.indicators?.quote?.[0]) {
+      return NextResponse.json([]); // Return empty if market data is missing
     }
 
-    const json = (await upstream.json()) as YahooChartResult;
-    const result = json.chart?.result?.[0];
-    const timestamps = result?.timestamp ?? [];
-    const quote = result?.indicators?.quote?.[0];
+    const times = result.timestamp;
+    const quotes = result.indicators.quote[0];
+    
+    // 4. Format the data for the charting library
+    const formatted = times
+      .map((t: number, i: number) => ({
+        time: t, 
+        open: quotes.open[i], 
+        high: quotes.high[i], 
+        low: quotes.low[i], 
+        close: quotes.close[i]
+      }))
+      .filter((c: { open: number | null }) => c.open !== null && c.open !== undefined);
+    
+    // 5. Return the clean data
+    return NextResponse.json(formatted);
 
-    if (!quote || timestamps.length === 0) {
-      return NextResponse.json([] satisfies Candle[]);
-    }
-
-    const candles: Candle[] = [];
-    for (let i = 0; i < timestamps.length; i += 1) {
-      const time = timestamps[i];
-      const open = quote.open?.[i];
-      const high = quote.high?.[i];
-      const low = quote.low?.[i];
-      const close = quote.close?.[i];
-
-      if (
-        typeof time !== "number" ||
-        typeof open !== "number" ||
-        typeof high !== "number" ||
-        typeof low !== "number" ||
-        typeof close !== "number"
-      ) {
-        continue;
-      }
-
-      if (
-        !Number.isFinite(time) ||
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) {
-        continue;
-      }
-
-      candles.push({ time, open, high, low, close });
-    }
-
-    return NextResponse.json(candles);
-  } catch {
+  } catch (error) {
+    console.error(`Quote API Error for ${ticker}:`, error);
     return NextResponse.json(
-      { error: `Unable to process ${resolvedTicker} market data.` },
-      { status: 500 },
+      { error: "Failed to fetch market data" }, 
+      { status: 500 }
     );
   }
 }

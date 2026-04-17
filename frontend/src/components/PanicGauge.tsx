@@ -2,202 +2,253 @@
 
 import { motion } from "framer-motion";
 
-const CX = 100;
-const CY = 100;
-const NEEDLE_LEN = 70;
-const ARC_RADIUS = 76;
+const MIN_ANGLE = -90;
+const MAX_ANGLE = 90;
 
-const ZONE_COLORS = [
-  "rgb(16 185 129)",
-  "rgb(52 211 153)",
-  "rgb(113 113 122)",
-  "rgb(249 115 22)",
-  "rgb(220 38 38)",
-];
+const RADIUS = 80;
+const ARC_STROKE = 10;
+const PADDING = ARC_STROKE * 2.4;
+
+const CENTER_X = RADIUS + PADDING;
+const CENTER_Y = RADIUS + PADDING;
+
+const VIEW_WIDTH = CENTER_X * 2;
+const VIEW_HEIGHT = CENTER_Y + ARC_STROKE * 3.8;
+
+const MAJOR_TICK_COUNT = 5;
+const MINOR_TICKS_PER_SEGMENT = 1;
+
+const TICK_OUTER_RADIUS = RADIUS + ARC_STROKE * 0.35;
+const MAJOR_TICK_INNER_RADIUS = RADIUS - ARC_STROKE * 1.15;
+const MINOR_TICK_INNER_RADIUS = RADIUS - ARC_STROKE * 0.8;
+const LABEL_RADIUS = RADIUS + ARC_STROKE * 1.45;
+const NEEDLE_LENGTH = RADIUS - ARC_STROKE * 1.45;
+const PIVOT_RADIUS = ARC_STROKE * 0.72;
 
 interface PanicGaugeProps {
-  score: number | null;
-  alert?: boolean;
+  value: number | null;
+  min?: number;
+  max?: number;
   className?: string;
 }
 
-function needleRotateDeg(score: number): number {
-  const s = Math.min(100, Math.max(0, score));
-  return 180 * (1 - s / 100);
+type Point = {
+  x: number;
+  y: number;
+};
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }
 
-function polarPoint(cx: number, cy: number, radius: number, angleDeg: number) {
-  const rad = (Math.PI / 180) * angleDeg;
+// Angle convention:
+// -90 => left endpoint, 0 => top, +90 => right endpoint.
+function polarToCartesian(cx: number, cy: number, radius: number, angleDeg: number): Point {
+  const theta = ((angleDeg - 90) * Math.PI) / 180;
   return {
-    x: cx + radius * Math.cos(rad),
-    y: cy + radius * Math.sin(rad),
+    x: cx + radius * Math.cos(theta),
+    y: cy + radius * Math.sin(theta),
   };
 }
 
-function arcPath(startDeg: number, endDeg: number) {
-  const start = polarPoint(CX, CY, ARC_RADIUS, startDeg);
-  const end = polarPoint(CX, CY, ARC_RADIUS, endDeg);
-  return `M ${start.x} ${start.y} A ${ARC_RADIUS} ${ARC_RADIUS} 0 0 1 ${end.x} ${end.y}`;
+function valueToAngle(value: number, min: number, max: number): number {
+  const span = max - min;
+  if (span <= 0) {
+    return MIN_ANGLE;
+  }
+  const normalized = clamp((value - min) / span, 0, 1);
+  return MIN_ANGLE + normalized * (MAX_ANGLE - MIN_ANGLE);
 }
 
-function scoreColor(score: number | null, alert: boolean): string {
-  if (alert) {
-    return "rgb(220 38 38)";
-  }
-  if (score === null || !Number.isFinite(score)) {
+function angleToArcPath(startAngle: number, endAngle: number, radius: number): string {
+  const start = polarToCartesian(CENTER_X, CENTER_Y, radius, startAngle);
+  const end = polarToCartesian(CENTER_X, CENTER_Y, radius, endAngle);
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 0 1 ${end.x} ${end.y}`;
+}
+
+function valueColor(value: number | null, min: number, max: number): string {
+  if (value === null || !Number.isFinite(value)) {
     return "rgb(161 161 170)";
   }
-  const s = Math.min(100, Math.max(0, score));
-  if (s <= 20) return ZONE_COLORS[0];
-  if (s <= 40) return ZONE_COLORS[1];
-  if (s <= 60) return ZONE_COLORS[2];
-  if (s <= 80) return ZONE_COLORS[3];
-  return ZONE_COLORS[4];
+  const angle = valueToAngle(value, min, max);
+  const ratio = (angle - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE);
+  if (ratio <= 0.4) return "rgb(52 211 153)";
+  if (ratio <= 0.65) return "rgb(245 158 11)";
+  return "rgb(248 113 113)";
 }
 
 export function PanicGauge({
-  score,
-  alert = false,
+  value,
+  min = 0,
+  max = 100,
   className = "",
 }: PanicGaugeProps) {
-  const rotate =
-    score === null || !Number.isFinite(score)
-      ? 180
-      : needleRotateDeg(score);
+  const safeValue = value !== null && Number.isFinite(value) ? value : min;
+  const angle = valueToAngle(safeValue, min, max);
+  const progressRatio = (angle - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE);
+  const semicircleLength = Math.PI * RADIUS;
+  const progressDashoffset = semicircleLength * (1 - progressRatio);
+
+  const backgroundArcPath = angleToArcPath(MIN_ANGLE, MAX_ANGLE, RADIUS);
+  const needleRotation = angle;
 
   const displayScore =
-    score !== null && Number.isFinite(score) ? score.toFixed(2) : "—";
+    value !== null && Number.isFinite(value) ? value.toFixed(2) : "--";
 
-  const needleColor = scoreColor(score, alert);
+  const needleColor = valueColor(value, min, max);
+
+  const majorTicks = Array.from({ length: MAJOR_TICK_COUNT + 1 }, (_, idx) => {
+    const t = idx / MAJOR_TICK_COUNT;
+    const tickAngle = MIN_ANGLE + t * (MAX_ANGLE - MIN_ANGLE);
+    const labelValue = min + (max - min) * t;
+    const outer = polarToCartesian(CENTER_X, CENTER_Y, TICK_OUTER_RADIUS, tickAngle);
+    const inner = polarToCartesian(CENTER_X, CENTER_Y, MAJOR_TICK_INNER_RADIUS, tickAngle);
+    const label = polarToCartesian(CENTER_X, CENTER_Y, LABEL_RADIUS, tickAngle);
+    return {
+      key: `major-${idx}`,
+      angle: tickAngle,
+      labelValue,
+      outer,
+      inner,
+      label,
+    };
+  });
+
+  const minorTicks = Array.from({ length: MAJOR_TICK_COUNT }, (_, segmentIdx) => {
+    const startT = segmentIdx / MAJOR_TICK_COUNT;
+    const ticks = Array.from({ length: MINOR_TICKS_PER_SEGMENT }, (_, tIdx) => {
+      const frac = (tIdx + 1) / (MINOR_TICKS_PER_SEGMENT + 1);
+      const t = startT + frac * (1 / MAJOR_TICK_COUNT);
+      const tickAngle = MIN_ANGLE + t * (MAX_ANGLE - MIN_ANGLE);
+      const outer = polarToCartesian(CENTER_X, CENTER_Y, TICK_OUTER_RADIUS, tickAngle);
+      const inner = polarToCartesian(CENTER_X, CENTER_Y, MINOR_TICK_INNER_RADIUS, tickAngle);
+      return {
+        key: `minor-${segmentIdx}-${tIdx}`,
+        outer,
+        inner,
+      };
+    });
+    return ticks;
+  }).flat();
 
   return (
     <div className={`relative flex flex-col items-center ${className}`}>
-      <motion.div
-        className={`relative border bg-zinc-950 p-4 ${
-          alert ? "border-red-600" : "border-zinc-800"
-        }`}
-        animate={
-          alert
-            ? {
-                borderColor: [
-                  "rgb(220 38 38)",
-                  "rgb(127 29 29)",
-                  "rgb(220 38 38)",
-                ],
-              }
-            : { borderColor: "rgb(39 39 42)" }
-        }
-        transition={
-          alert
-            ? { duration: 1.2, repeat: Infinity, ease: "linear" }
-            : { duration: 0.2 }
-        }
-      >
+      <div className="relative border border-zinc-800 bg-zinc-950 p-4">
         <svg
-          width="220"
-          height="130"
-          viewBox="0 0 200 120"
-          className="block"
+          width="100%"
+          height="auto"
+          viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+          className="block max-w-[300px]"
+          shapeRendering="geometricPrecision"
           aria-hidden
         >
-          {ZONE_COLORS.map((color, idx) => {
-            const start = 180 - idx * 36;
-            const end = 180 - (idx + 1) * 36;
-            return (
-              <path
-                key={color}
-                d={arcPath(start, end)}
-                fill="none"
-                stroke={color}
-                strokeWidth="8"
-                strokeLinecap="butt"
-              />
-            );
-          })}
+          <defs>
+            <linearGradient id="gauge-progress-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="rgb(52 211 153)" />
+              <stop offset="55%" stopColor="rgb(250 204 21)" />
+              <stop offset="100%" stopColor="rgb(248 113 113)" />
+            </linearGradient>
+            <radialGradient id="pivot-gradient" cx="50%" cy="50%" r="60%">
+              <stop offset="0%" stopColor="rgb(63 63 70)" />
+              <stop offset="100%" stopColor="rgb(24 24 27)" />
+            </radialGradient>
+          </defs>
 
-          {Array.from({ length: 6 }).map((_, idx) => {
-            const angle = 180 - idx * 36;
-            const outer = polarPoint(CX, CY, ARC_RADIUS + 2, angle);
-            const inner = polarPoint(CX, CY, ARC_RADIUS - 10, angle);
+          <path
+            d={backgroundArcPath}
+            fill="transparent"
+            stroke="rgb(39 39 42)"
+            strokeWidth={ARC_STROKE}
+            strokeLinecap="round"
+          />
+
+          <motion.path
+            d={backgroundArcPath}
+            fill="transparent"
+            stroke="url(#gauge-progress-gradient)"
+            strokeWidth={ARC_STROKE}
+            strokeLinecap="round"
+            strokeDasharray={semicircleLength}
+            animate={{ strokeDashoffset: progressDashoffset }}
+            strokeDashoffset={semicircleLength}
+            initial={false}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+          />
+
+          {minorTicks.map((tick) => {
             return (
               <line
-                key={`tick-${idx}`}
-                x1={outer.x}
-                y1={outer.y}
-                x2={inner.x}
-                y2={inner.y}
-                stroke="rgb(63 63 70)"
+                key={tick.key}
+                x1={tick.outer.x}
+                y1={tick.outer.y}
+                x2={tick.inner.x}
+                y2={tick.inner.y}
+                stroke="rgb(82 82 91)"
                 strokeWidth="1"
               />
             );
           })}
 
-          <line
-            x1="24"
-            y1="100"
-            x2="40"
-            y2="100"
-            stroke="rgb(82 82 91)"
-            strokeWidth="1"
+          {majorTicks.map((tick) => {
+            const roundedLabel = Math.round(tick.labelValue);
+            return (
+              <g key={tick.key}>
+                <line
+                  x1={tick.outer.x}
+                  y1={tick.outer.y}
+                  x2={tick.inner.x}
+                  y2={tick.inner.y}
+                  stroke="rgb(113 113 122)"
+                  strokeWidth="1.1"
+                />
+                <text
+                  x={tick.label.x}
+                  y={tick.label.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="rgb(113 113 122)"
+                  fontSize="9"
+                  letterSpacing="0.08em"
+                  fontFamily="ui-monospace, monospace"
+                >
+                  {roundedLabel}
+                </text>
+              </g>
+            );
+          })}
+
+          <motion.line
+            x1={CENTER_X}
+            y1={CENTER_Y}
+            x2={CENTER_X}
+            y2={CENTER_Y - NEEDLE_LENGTH}
+            stroke={needleColor}
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            initial={false}
+            animate={{ rotate: needleRotation }}
+            transition={{ type: "spring", stiffness: 130, damping: 22, mass: 0.75 }}
+            style={{ transformOrigin: `${CENTER_X}px ${CENTER_Y}px` }}
           />
-          <line
-            x1="176"
-            y1="100"
-            x2="160"
-            y2="100"
-            stroke="rgb(82 82 91)"
-            strokeWidth="1"
-          />
-          <text
-            x="20"
-            y="112"
-            fill="rgb(113 113 122)"
-            fontSize="8"
-            fontFamily="ui-monospace, monospace"
-          >
-            0
-          </text>
-          <text
-            x="168"
-            y="112"
-            fill="rgb(113 113 122)"
-            fontSize="8"
-            fontFamily="ui-monospace, monospace"
-          >
-            100
-          </text>
-          <g transform={`translate(${CX} ${CY})`}>
-            <motion.g
-              initial={false}
-              animate={{ rotate }}
-              transition={{
-                type: "spring",
-                stiffness: 120,
-                damping: 24,
-                mass: 0.85,
-              }}
-            >
-              <line
-                x1={0}
-                y1={0}
-                x2={NEEDLE_LEN}
-                y2={0}
-                stroke={needleColor}
-                strokeWidth="2"
-                strokeLinecap="square"
-              />
-            </motion.g>
-          </g>
+
           <circle
-            cx={CX}
-            cy={CY}
-            r="4"
-            fill="rgb(24 24 27)"
+            cx={CENTER_X}
+            cy={CENTER_Y}
+            r={PIVOT_RADIUS}
+            fill="url(#pivot-gradient)"
             stroke="rgb(63 63 70)"
-            strokeWidth="1"
+            strokeWidth="1.2"
+          />
+
+          <circle
+            cx={CENTER_X}
+            cy={CENTER_Y}
+            r={PIVOT_RADIUS * 0.4}
+            fill="rgb(161 161 170)"
+            opacity="0.85"
           />
         </svg>
-      </motion.div>
+      </div>
       <p className="mt-3 font-mono text-xs tabular-nums text-zinc-500">
         SCORE{" "}
         <span style={{ color: needleColor }}>
