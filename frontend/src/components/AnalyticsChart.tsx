@@ -165,13 +165,36 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
         return;
       }
 
+      // Restrict hover completely to the lower section of the chart (Panic Engine area)
+      // This prevents the tooltip from awkwardly showing up when examining Price Candles
+      const isBottomPanel = param.point.y > 300;
+      if (!isBottomPanel) {
+        setTooltip((prev) => ({ ...prev, visible: false }));
+        return;
+      }
+
       const unixTime = timeToUnixSeconds(param.time);
       if (unixTime === null) {
         setTooltip((prev) => ({ ...prev, visible: false }));
         return;
       }
+      
+      let headline = historyHeadlineMapRef.current.get(unixTime);
+      const isHistogramHit = !!param.seriesData.get(histogramSeriesRef.current!);
+      
+      // If we are in the bottom panel but not perfectly snapped to a panic bar, 
+      // scrub to the nearest one within 48h to elegantly bypass weekend gaps
+      if ((!headline || !isHistogramHit) && historyHeadlineMapRef.current.size > 0) {
+        let minDiff = 48 * 3600; 
+        for (const [ts, title] of historyHeadlineMapRef.current.entries()) {
+          const diff = Math.abs(ts - unixTime);
+          if (diff < minDiff) {
+            minDiff = diff;
+            headline = title;
+          }
+        }
+      }
 
-      const headline = historyHeadlineMapRef.current.get(unixTime);
       if (!headline) {
         setTooltip((prev) => ({ ...prev, visible: false }));
         return;
@@ -179,7 +202,11 @@ export function AnalyticsChart({ ticker = "SPY", className = "" }: AnalyticsChar
 
       const maxX = el.clientWidth - 320;
       const x = Math.min(Math.max(8, param.point.x + 16), Math.max(8, maxX));
-      const y = Math.max(8, param.point.y + 16);
+      
+      // Render the tooltip ABOVE the cursor so it doesn't get clipped by the container's bottom edge!
+      const headerOffset = 32;
+      const y = Math.max(8, param.point.y - 48 + headerOffset); 
+      
       setTooltip({ visible: true, x, y, headline });
     };
 
