@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        // SonarQube connects via the shared devops_net
-        SONAR_HOST_URL = 'http://sonarqube_devops:9000'
+        // SonarQube connects via the shared devops network — use SERVICE name not container_name
+        SONAR_HOST_URL = 'http://sonarqube:9000'
         // Bind the SonarQube token safely from Jenkins Credentials
         SONAR_TOKEN = credentials('sonar-token')
     }

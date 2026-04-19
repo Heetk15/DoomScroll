@@ -2,7 +2,7 @@
 services:
   jenkins:
     image: jenkins/jenkins:lts
-    container_name: jenkins_devops
+    container_name: jenkins-devops
     user: root # Required to access the host's Docker socket without sudo errors
     ports:
       - "8080:8080"
@@ -17,7 +17,7 @@ services:
 
   sonarqube:
     image: sonarqube:9.9.4-community # Stable LTS Community Edition
-    container_name: sonarqube_devops
+    container_name: sonarqube-devops
     ports:
       - "9000:9000"
     environment:
