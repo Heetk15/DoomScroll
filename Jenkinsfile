@@ -24,12 +24,12 @@ pipeline {
                 sh '''
                 docker run --rm \
                     -e SONAR_HOST_URL="${SONAR_HOST_URL}" \
-                    -e SONAR_LOGIN="${SONAR_TOKEN}" \
                     -v "${WORKSPACE}:/usr/src" \
                     --network doomscroll_devops_net \
-                    sonarsource/sonar-scanner-cli:5 \
+                    sonarsource/sonar-scanner-cli:4.8 \
                     -Dsonar.projectKey=DoomScroll \
                     -Dsonar.sources=. \
+                    -Dsonar.login="${SONAR_TOKEN}" \
                     -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**
                 '''
             }
