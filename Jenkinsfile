@@ -27,7 +27,7 @@ pipeline {
                     -e SONAR_LOGIN="${SONAR_TOKEN}" \
                     -v "${WORKSPACE}:/usr/src" \
                     --network doomscroll_devops_net \
-                    sonarsource/sonar-scanner-cli \
+                    sonarsource/sonar-scanner-cli:5 \
                     -Dsonar.projectKey=DoomScroll \
                     -Dsonar.sources=. \
                     -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**
