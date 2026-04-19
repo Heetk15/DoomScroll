@@ -1,0 +1,13 @@
+---
+- name: Deploy DoomScroll Stack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Refresh containers using Docker Compose
+      community.docker.docker_compose:
+        project_src: "{{ playbook_dir }}"
+        state: present
+        build: yes
+        recreate: always

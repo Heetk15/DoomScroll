@@ -1,0 +1,42 @@
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins_devops
+    user: root # Required to access the host's Docker socket without sudo errors
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Mount the Docker socket so Jenkins can build images and run containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - devops_net
+    restart: unless-stopped
+
+  sonarqube:
+    image: sonarqube:9.9.4-community # Stable LTS Community Edition
+    container_name: sonarqube_devops
+    ports:
+      - "9000:9000"
+    environment:
+      # Disabling bootstrap checks allows SonarQube to run easily in non-production Docker setups
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    networks:
+      - devops_net
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+
+networks:
+  devops_net:
+    driver: bridge
