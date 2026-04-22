@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        skipDefaultCheckout(true)
+    }
+
     parameters {
         choice(name: 'DEPLOY_MODE', choices: ['local', 'ssh'], description: 'Deployment mode: local Docker Compose in Jenkins workspace or SSH target deployment')
         string(name: 'LOCAL_COMPOSE_PROJECT', defaultValue: 'doomscroll', description: 'Compose project name used in local mode to avoid duplicate stacks from different workspace paths')
@@ -24,6 +28,13 @@ pipeline {
     }
 
     stages {
+        stage('Checkout Source') {
+            steps {
+                echo "Pulling latest code from main branch..."
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/Heetk15/DoomScroll.git', credentialsId: 'github-token']])
+            }
+        }
+
         stage('Pre-flight Summary') {
             steps {
                 echo "Deployment pre-flight check"
