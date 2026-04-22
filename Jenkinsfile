@@ -121,7 +121,7 @@ pipeline {
             }
             steps {
                 echo "DEPLOY_MODE=local. Deploying directly from Jenkins workspace via Docker socket..."
-                sh '''
+                sh 'touch backend/.env'
                 docker compose -f docker-compose.yml up -d --build --remove-orphans
                 '''
             }
