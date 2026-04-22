@@ -24,14 +24,6 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                echo "Pulling latest code from main branch..."
-                // Simplified checkout mapping to the underlying repo
-                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/Heetk15/DoomScroll.git', credentialsId: 'github-token']])
-            }
-        }
-
         stage('Pre-flight Summary') {
             steps {
                 echo "Deployment pre-flight check"
@@ -62,9 +54,11 @@ pipeline {
                     --network "${DEVOPS_NETWORK}" \
                     sonarsource/sonar-scanner-cli:4.8 \
                     -Dsonar.projectKey=DoomScroll \
-                    -Dsonar.sources=. \
+                    -Dsonar.projectBaseDir=/usr/src \
+                    -Dsonar.sources=frontend/src,backend \
+                    -Dsonar.scm.provider=git \
                     -Dsonar.login="${SONAR_TOKEN}" \
-                    -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**
+                    -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**,**/.git/**
                 '''
             }
         }
@@ -115,6 +109,21 @@ pipeline {
                     rm -f "${ARCHIVE_LOCAL}"
                     '''
                 }
+            }
+        }
+
+        stage('Pre-Deploy Health Check (Local)') {
+            when {
+                expression { params.DEPLOY_MODE == 'local' }
+            }
+            steps {
+                echo "Running pre-deploy checks for local mode..."
+                sh '''
+                set -e
+                test -f frontend/package.json
+                test -f backend/main.py
+                docker compose -p "${LOCAL_COMPOSE_PROJECT}" -f docker-compose.yml config > /dev/null
+                '''
             }
         }
 
