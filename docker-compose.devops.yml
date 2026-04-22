@@ -37,9 +37,13 @@ services:
 
 volumes:
   jenkins_home:
+    name: doomscroll_jenkins_home
   sonarqube_data:
+    name: doomscroll_sonarqube_data
   sonarqube_extensions:
+    name: doomscroll_sonarqube_extensions
   sonarqube_logs:
+    name: doomscroll_sonarqube_logs
 
 networks:
   devops_net:
