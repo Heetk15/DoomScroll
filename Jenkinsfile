@@ -68,6 +68,7 @@ pipeline {
                     -Dsonar.projectKey=DoomScroll \
                     -Dsonar.projectBaseDir="${WORKSPACE}" \
                     -Dsonar.sources=frontend/src,backend \
+                    -Dsonar.python.version=3.10 \
                     -Dsonar.scm.provider=git \
                     -Dsonar.login="${SONAR_TOKEN}" \
                     -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**,**/.git/**
