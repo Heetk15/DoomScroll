@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     options {
+        disableConcurrentBuilds()
         skipDefaultCheckout(true)
     }
 
@@ -73,6 +74,14 @@ pipeline {
                     -Dsonar.login="${SONAR_TOKEN}" \
                     -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**,**/.git/**
                 '''
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
             }
         }
 
