@@ -1,4 +1,6 @@
 
+name: doomscroll-devops
+
 services:
   jenkins:
     build:
