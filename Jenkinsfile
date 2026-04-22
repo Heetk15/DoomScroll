@@ -80,7 +80,57 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                                        sh '''
+                                        set -e
+
+                                        REPORT_FILE="${WORKSPACE}/.scannerwork/report-task.txt"
+                                        test -f "${REPORT_FILE}"
+
+                                        CE_TASK_ID=$(grep '^ceTaskId=' "${REPORT_FILE}" | cut -d'=' -f2-)
+                                        SONAR_SERVER=$(grep '^serverUrl=' "${REPORT_FILE}" | cut -d'=' -f2-)
+
+                                        if [ -z "${SONAR_SERVER}" ]; then
+                                            SONAR_SERVER="${SONAR_HOST_URL}"
+                                        fi
+
+                                        if [ -z "${CE_TASK_ID}" ] || [ -z "${SONAR_SERVER}" ]; then
+                                            echo "Missing ceTaskId or serverUrl in report-task.txt"
+                                            exit 1
+                                        fi
+
+                                        ANALYSIS_ID=""
+                                        for _ in $(seq 1 60); do
+                                            CE_JSON=$(curl -sS -u "${SONAR_TOKEN}:" "${SONAR_SERVER}/api/ce/task?id=${CE_TASK_ID}")
+
+                                            CE_STATUS=$(printf '%s' "${CE_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['task']['status'])")
+
+                                            if [ "${CE_STATUS}" = "PENDING" ] || [ "${CE_STATUS}" = "IN_PROGRESS" ]; then
+                                                sleep 5
+                                                continue
+                                            fi
+
+                                            if [ "${CE_STATUS}" != "SUCCESS" ]; then
+                                                echo "Sonar Compute Engine task failed with status: ${CE_STATUS}"
+                                                exit 1
+                                            fi
+
+                                            ANALYSIS_ID=$(printf '%s' "${CE_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['task'].get('analysisId',''))")
+                                            break
+                                        done
+
+                                        if [ -z "${ANALYSIS_ID}" ]; then
+                                            echo "Timed out waiting for Sonar Compute Engine analysisId"
+                                            exit 1
+                                        fi
+
+                                        QG_JSON=$(curl -sS -u "${SONAR_TOKEN}:" "${SONAR_SERVER}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+                                        QG_STATUS=$(printf '%s' "${QG_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['projectStatus']['status'])")
+
+                                        echo "Quality Gate status: ${QG_STATUS}"
+                                        if [ "${QG_STATUS}" != "OK" ]; then
+                                            exit 1
+                                        fi
+                                        '''
                 }
             }
         }
