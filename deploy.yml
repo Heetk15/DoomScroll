@@ -1,13 +1,22 @@
 ---
 - name: Deploy DoomScroll Stack
-  hosts: localhost
-  connection: local
+  hosts: all
   gather_facts: false
+  vars:
+    deploy_path: "{{ deploy_path | default('/opt/DoomScroll') }}"
 
   tasks:
-    - name: Refresh containers using Docker Compose
-      community.docker.docker_compose:
-        project_src: "{{ playbook_dir }}"
-        state: present
-        build: yes
-        recreate: always
+    - name: Ensure deployment repository exists on target host
+      ansible.builtin.stat:
+        path: "{{ deploy_path }}/docker-compose.yml"
+      register: compose_file
+
+    - name: Stop if docker-compose.yml is missing on target host
+      ansible.builtin.fail:
+        msg: "{{ deploy_path }}/docker-compose.yml does not exist on target host."
+      when: not compose_file.stat.exists
+
+    - name: Refresh containers using Docker Compose on target host
+      ansible.builtin.shell: docker compose -f docker-compose.yml up -d --build --remove-orphans
+      args:
+        chdir: "{{ deploy_path }}"

@@ -1,7 +1,9 @@
 
 services:
   jenkins:
-    image: jenkins/jenkins:lts
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
     container_name: jenkins-devops
     user: root # Required to access the host's Docker socket without sudo errors
     ports:
@@ -39,4 +41,5 @@ volumes:
 
 networks:
   devops_net:
+    name: doomscroll_devops_net
     driver: bridge
