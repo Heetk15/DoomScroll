@@ -57,15 +57,16 @@ pipeline {
         stage('Code Quality (SonarQube)') {
             steps {
                 echo "Running SonarScanner via CLI container..."
-                // Running the scanner through Docker CLI to avoid managing Java/Node versions inside Jenkins natively
+                // Use jenkins container volumes so scanner sees the real workspace even with Docker socket mounting.
                 sh '''
                 docker run --rm \
                     -e SONAR_HOST_URL="${SONAR_HOST_URL}" \
-                    -v "${WORKSPACE}:/usr/src" \
+                    --volumes-from jenkins-devops \
                     --network "${DEVOPS_NETWORK}" \
+                    -w "${WORKSPACE}" \
                     sonarsource/sonar-scanner-cli:4.8 \
                     -Dsonar.projectKey=DoomScroll \
-                    -Dsonar.projectBaseDir=/usr/src \
+                    -Dsonar.projectBaseDir="${WORKSPACE}" \
                     -Dsonar.sources=frontend/src,backend \
                     -Dsonar.scm.provider=git \
                     -Dsonar.login="${SONAR_TOKEN}" \
