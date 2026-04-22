@@ -3,6 +3,7 @@ pipeline {
 
     parameters {
         choice(name: 'DEPLOY_MODE', choices: ['local', 'ssh'], description: 'Deployment mode: local Docker Compose in Jenkins workspace or SSH target deployment')
+        string(name: 'LOCAL_COMPOSE_PROJECT', defaultValue: 'doomscroll', description: 'Compose project name used in local mode to avoid duplicate stacks from different workspace paths')
         string(name: 'DEPLOY_HOST', defaultValue: 'host.docker.internal', description: 'SSH reachable host where Docker Compose will run')
         string(name: 'DEPLOY_USER', defaultValue: 'deploy', description: 'SSH user on deployment host')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/DoomScroll', description: 'Absolute path on target host containing docker-compose.yml')
@@ -19,6 +20,7 @@ pipeline {
         DEPLOY_HOST = "${params.DEPLOY_HOST}"
         DEPLOY_USER = "${params.DEPLOY_USER}"
         DEPLOY_PATH = "${params.DEPLOY_PATH}"
+        LOCAL_COMPOSE_PROJECT = "${params.LOCAL_COMPOSE_PROJECT}"
     }
 
     stages {
@@ -39,6 +41,7 @@ pipeline {
                 echo "Build Number : ${BUILD_NUMBER}"
                 echo "Branch       : ${BRANCH_NAME:-main}"
                 echo "Deploy Mode  : ${DEPLOY_MODE}"
+                echo "Local Project: ${LOCAL_COMPOSE_PROJECT}"
                 echo "Deploy Host  : ${DEPLOY_HOST}"
                 echo "Deploy User  : ${DEPLOY_USER}"
                 echo "Deploy Path  : ${DEPLOY_PATH}"
@@ -79,7 +82,7 @@ pipeline {
         stage('Docker Build') {
             steps {
                 echo "Building application images..."
-                sh 'docker compose -f docker-compose.yml build'
+                sh 'docker compose -p "${LOCAL_COMPOSE_PROJECT}" -f docker-compose.yml build'
             }
         }
 
@@ -123,7 +126,7 @@ pipeline {
                 echo "DEPLOY_MODE=local. Deploying directly from Jenkins workspace via Docker socket..."
                 sh '''
                 test -f backend/.env || touch backend/.env
-                docker compose -f docker-compose.yml up -d --build --remove-orphans
+                docker compose -p "${LOCAL_COMPOSE_PROJECT}" -f docker-compose.yml up -d --build --remove-orphans
                 '''
             }
         }
