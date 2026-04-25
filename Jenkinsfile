@@ -36,6 +36,15 @@ pipeline {
             }
         }
 
+        stage('Unit Tests (Pytest)') {
+            steps {
+                echo "Running Pytest unit tests in a temporary container..."
+                sh '''
+                docker run --rm --network=none -v "${WORKSPACE}/backend:/app" -w /app python:3.10-slim sh -c "pip install pytest && pytest test_main.py -v"
+                '''
+            }
+        }
+
         stage('Pre-flight Summary') {
             steps {
                 echo "Deployment pre-flight check"
