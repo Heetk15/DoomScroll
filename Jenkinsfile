@@ -7,7 +7,7 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'DEPLOY_MODE', choices: ['local', 'ssh'], description: 'Deployment mode: local Docker Compose in Jenkins workspace or SSH target deployment')
+        choice(name: 'DEPLOY_MODE', choices: ['k8s', 'ssh'], description: 'Deployment mode: Kubernetes cluster deploy or SSH target deployment')
         string(name: 'LOCAL_COMPOSE_PROJECT', defaultValue: 'doomscroll', description: 'Compose project name used in local mode to avoid duplicate stacks from different workspace paths')
         string(name: 'DEPLOY_HOST', defaultValue: 'host.docker.internal', description: 'SSH reachable host where Docker Compose will run')
         string(name: 'DEPLOY_USER', defaultValue: 'deploy', description: 'SSH user on deployment host')
@@ -156,6 +156,7 @@ pipeline {
                 sh '''
                 docker --version
                 docker compose version
+                kubectl version --client
                 ansible --version
                 '''
             }
@@ -200,30 +201,32 @@ pipeline {
             }
         }
 
-        stage('Pre-Deploy Health Check (Local)') {
+        stage('Pre-Deploy Health Check (Kubernetes)') {
             when {
-                expression { params.DEPLOY_MODE == 'local' }
+                expression { params.DEPLOY_MODE == 'k8s' }
             }
             steps {
-                echo "Running pre-deploy checks for local mode..."
+                echo "Running pre-deploy checks for Kubernetes mode..."
                 sh '''
                 set -e
-                test -f frontend/package.json
-                test -f backend/main.py
-                docker compose -p "${LOCAL_COMPOSE_PROJECT}" -f docker-compose.yml config > /dev/null
+                test -d k8s
+                test -f k8s/frontend.yaml
+                test -f k8s/backend.yaml
+                test -f k8s/postgres.yaml
+                test -f k8s/redis.yaml
+                kubectl version --client > /dev/null
                 '''
             }
         }
 
-        stage('Deploy (Local)') {
+        stage('Deploy (Kubernetes)') {
             when {
-                expression { params.DEPLOY_MODE == 'local' }
+                expression { params.DEPLOY_MODE == 'k8s' }
             }
             steps {
-                echo "DEPLOY_MODE=local. Deploying directly from Jenkins workspace via Docker socket..."
+                echo "DEPLOY_MODE=k8s. Deploying manifests to Kubernetes cluster..."
                 sh '''
-                test -f backend/.env || touch backend/.env
-                docker compose -p "${LOCAL_COMPOSE_PROJECT}" -f docker-compose.yml up -d --build --remove-orphans
+                kubectl apply -f k8s/
                 '''
             }
         }
