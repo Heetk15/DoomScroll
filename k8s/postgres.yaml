@@ -2,6 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
+  namespace: doomscroll-prod
 spec:
   accessModes:
     - ReadWriteOnce
@@ -13,6 +14,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
+  namespace: doomscroll-prod
 spec:
   replicas: 1
   selector:
@@ -48,6 +50,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
+  namespace: doomscroll-prod
 spec:
   selector:
     app: postgres

@@ -226,7 +226,8 @@ pipeline {
             steps {
                 echo "DEPLOY_MODE=k8s. Deploying manifests to Kubernetes cluster..."
                 sh '''
-                kubectl apply -f k8s/
+                kubectl create namespace doomscroll-prod --dry-run=client -o yaml | kubectl apply -f -
+                kubectl apply -f k8s/ -n doomscroll-prod
                 '''
             }
         }
