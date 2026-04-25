@@ -15,6 +15,7 @@ services:
       - jenkins_home:/var/jenkins_home
       # Mount the Docker socket so Jenkins can build images and run containers
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.kube:/var/jenkins_home/.kube:ro
     networks:
       - devops_net
     restart: unless-stopped

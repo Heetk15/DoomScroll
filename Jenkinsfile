@@ -8,7 +8,6 @@ pipeline {
 
     parameters {
         choice(name: 'DEPLOY_MODE', choices: ['k8s', 'ssh'], description: 'Deployment mode: Kubernetes cluster deploy or SSH target deployment')
-        string(name: 'KUBECONFIG_CREDENTIAL_ID', defaultValue: 'kubeconfig', description: 'Jenkins Secret File credential ID containing kubeconfig for cluster access')
         string(name: 'LOCAL_COMPOSE_PROJECT', defaultValue: 'doomscroll', description: 'Compose project name used in local mode to avoid duplicate stacks from different workspace paths')
         string(name: 'DEPLOY_HOST', defaultValue: 'host.docker.internal', description: 'SSH reachable host where Docker Compose will run')
         string(name: 'DEPLOY_USER', defaultValue: 'deploy', description: 'SSH user on deployment host')
@@ -64,7 +63,6 @@ pipeline {
                 echo "Deploy Host  : ${DEPLOY_HOST}"
                 echo "Deploy User  : ${DEPLOY_USER}"
                 echo "Deploy Path  : ${DEPLOY_PATH}"
-                echo "Kubeconfig ID: ${KUBECONFIG_CREDENTIAL_ID}"
                 echo "Workspace    : ${WORKSPACE}"
                 echo "============================================="
                 '''
@@ -228,19 +226,20 @@ pipeline {
             }
             steps {
                 echo "Running pre-deploy checks for Kubernetes mode..."
-                withCredentials([file(credentialsId: "${params.KUBECONFIG_CREDENTIAL_ID}", variable: 'KUBECONFIG_FILE')]) {
-                    sh '''
-                    set -e
-                    test -d k8s
-                    test -f k8s/frontend.yaml
-                    test -f k8s/backend.yaml
-                    test -f k8s/postgres.yaml
-                    test -f k8s/redis.yaml
-                    export KUBECONFIG="${KUBECONFIG_FILE}"
-                    kubectl version --client > /dev/null
-                    kubectl get namespace >/dev/null
-                    '''
-                }
+                sh '''
+                set -e
+                test -d k8s
+                test -f k8s/frontend.yaml
+                test -f k8s/backend.yaml
+                test -f k8s/postgres.yaml
+                test -f k8s/redis.yaml
+                test -f /var/jenkins_home/.kube/config
+                cp /var/jenkins_home/.kube/config /tmp/kubeconfig
+                sed -i 's/127.0.0.1/host.docker.internal/g; s/localhost/host.docker.internal/g' /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl version --client > /dev/null
+                kubectl get namespace >/dev/null
+                '''
             }
         }
 
@@ -250,14 +249,14 @@ pipeline {
             }
             steps {
                 echo "Deploying manifests to Kubernetes cluster (DEPLOY_MODE=${DEPLOY_MODE})..."
-                withCredentials([file(credentialsId: "${params.KUBECONFIG_CREDENTIAL_ID}", variable: 'KUBECONFIG_FILE')]) {
-                    sh '''
-                    set -e
-                    export KUBECONFIG="${KUBECONFIG_FILE}"
-                    kubectl create namespace doomscroll-prod --dry-run=client -o yaml | kubectl apply --validate=false -f -
-                    kubectl apply --validate=false -f k8s/ -n doomscroll-prod
-                    '''
-                }
+                sh '''
+                set -e
+                cp /var/jenkins_home/.kube/config /tmp/kubeconfig
+                sed -i 's/127.0.0.1/host.docker.internal/g; s/localhost/host.docker.internal/g' /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl create namespace doomscroll-prod --dry-run=client -o yaml | kubectl apply -f -
+                kubectl apply -f k8s/ -n doomscroll-prod
+                '''
             }
         }
 
