@@ -69,6 +69,25 @@ pipeline {
             }
         }
 
+                stage('Validate Deploy Mode') {
+                        steps {
+                                sh '''
+                                case "${DEPLOY_MODE}" in
+                                    k8s|ssh)
+                                        echo "DEPLOY_MODE ${DEPLOY_MODE} is valid"
+                                        ;;
+                                    local)
+                                        echo "DEPLOY_MODE=local detected (legacy). Treating as k8s for backward compatibility."
+                                        ;;
+                                    *)
+                                        echo "Invalid DEPLOY_MODE: ${DEPLOY_MODE}. Allowed values: k8s, ssh"
+                                        exit 1
+                                        ;;
+                                esac
+                                '''
+                        }
+                }
+
         stage('Code Quality (SonarQube)') {
             steps {
                 echo "Running SonarScanner via CLI container..."
@@ -203,7 +222,7 @@ pipeline {
 
         stage('Pre-Deploy Health Check (Kubernetes)') {
             when {
-                expression { params.DEPLOY_MODE == 'k8s' }
+                expression { params.DEPLOY_MODE == 'k8s' || params.DEPLOY_MODE == 'local' }
             }
             steps {
                 echo "Running pre-deploy checks for Kubernetes mode..."
@@ -221,10 +240,10 @@ pipeline {
 
         stage('Deploy (Kubernetes)') {
             when {
-                expression { params.DEPLOY_MODE == 'k8s' }
+                expression { params.DEPLOY_MODE == 'k8s' || params.DEPLOY_MODE == 'local' }
             }
             steps {
-                echo "DEPLOY_MODE=k8s. Deploying manifests to Kubernetes cluster..."
+                echo "Deploying manifests to Kubernetes cluster (DEPLOY_MODE=${DEPLOY_MODE})..."
                 sh '''
                 kubectl create namespace doomscroll-prod --dry-run=client -o yaml | kubectl apply -f -
                 kubectl apply -f k8s/ -n doomscroll-prod
