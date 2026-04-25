@@ -40,7 +40,12 @@ pipeline {
             steps {
                 echo "Running Pytest unit tests in a temporary container..."
                 sh '''
-                docker run --rm --network=none -v "${WORKSPACE}/backend:/app" -w /app python:3.10-slim sh -c "pip install pytest && pytest test_main.py -v"
+                docker run --rm \
+                    --network "${DEVOPS_NETWORK}" \
+                    -v "${WORKSPACE}/backend:/app" \
+                    -w /app \
+                    python:3.10-slim \
+                    sh -c "pip install --no-cache-dir pytest fastapi pydantic sqlalchemy python-dotenv redis requests && pytest test_main.py -v"
                 '''
             }
         }
