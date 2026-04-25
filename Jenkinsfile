@@ -42,10 +42,10 @@ pipeline {
                 sh '''
                 docker run --rm \
                     --network "${DEVOPS_NETWORK}" \
-                    -v "${WORKSPACE}/backend:/app" \
-                    -w /app \
+                    --volumes-from jenkins-devops \
+                    -w "${WORKSPACE}/backend" \
                     python:3.10-slim \
-                    sh -c "pip install --no-cache-dir pytest fastapi pydantic sqlalchemy python-dotenv redis requests && pytest test_main.py -v"
+                    sh -c "pip install --no-cache-dir -r requirements.txt && pytest test_main.py -v"
                 '''
             }
         }
