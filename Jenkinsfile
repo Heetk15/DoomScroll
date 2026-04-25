@@ -45,7 +45,7 @@ pipeline {
                     --volumes-from jenkins-devops \
                     -w "${WORKSPACE}/backend" \
                     python:3.10-slim \
-                    sh -c "pip install --no-cache-dir -r requirements.txt && pytest test_main.py -v"
+                    sh -c "pip install --no-cache-dir -r requirements.txt pytest-cov && pytest test_main.py -v --cov=main --cov-report=xml:coverage.xml"
                 '''
             }
         }
@@ -84,6 +84,8 @@ pipeline {
                     -Dsonar.projectBaseDir="${WORKSPACE}" \
                     -Dsonar.sources=frontend/src,backend \
                     -Dsonar.python.version=3.10 \
+                    -Dsonar.python.coverage.reportPaths=backend/coverage.xml \
+                    -Dsonar.coverage.exclusions=frontend/src/**,backend/test_*.py \
                     -Dsonar.scm.provider=git \
                     -Dsonar.login="${SONAR_TOKEN}" \
                     -Dsonar.exclusions=**/node_modules/**,**/__pycache__/**,**/.next/**,**/.git/**
