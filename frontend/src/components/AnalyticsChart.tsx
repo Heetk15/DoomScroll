@@ -47,7 +47,7 @@ function timeToUnixSeconds(time: Time): number | null {
   if (typeof time === "number") {
     return time;
   }
-  if ("year" in time && "month" in time && "day" in time) {
+  if (typeof time === "object" && time !== null && "year" in time && "month" in time && "day" in time) {
     const millis = Date.UTC(time.year, time.month - 1, time.day);
     return Math.floor(millis / 1000);
   }
