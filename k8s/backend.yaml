@@ -21,9 +21,9 @@ spec:
             - containerPort: 8000
           env:
             - name: REDIS_URL
-              value: redis://redis:6379/0
+              value: redis://redis.doomscroll-prod.svc.cluster.local:6379/0
             - name: DATABASE_URL
-              value: postgresql+psycopg2://doom_user:doom_pass@postgres:5432/doomscroll_db
+              value: postgresql+psycopg2://doom_user:doom_pass@postgres.doomscroll-prod.svc.cluster.local:5432/doomscroll_db
 ---
 apiVersion: v1
 kind: Service
