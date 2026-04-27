@@ -322,6 +322,27 @@ def _sentiment_fallback() -> dict:
     }
 
 
+def _sentiment_from_history(db: Session, ticker: str) -> dict | None:
+    try:
+        stmt = select(SentimentHistory)
+        if ticker != "ALL":
+            stmt = stmt.where(SentimentHistory.ticker == ticker)
+        row = db.scalars(stmt.order_by(SentimentHistory.timestamp.desc())).first()
+    except SQLAlchemyError:
+        return None
+
+    if row is None:
+        return None
+
+    return {
+        "ticker": ticker,
+        "panic_score": row.panic_score,
+        "headlines": [row.top_headline] if row.top_headline else [],
+        "top_headline": row.top_headline or "",
+        "timestamp": row.timestamp.timestamp(),
+    }
+
+
 @app.get("/api/sentiment")
 def get_sentiment(
     ticker: str = Query(default="ALL", description="Ticker symbol like TSLA, AAPL, or ALL for market-wide sentiment"),
@@ -335,13 +356,11 @@ def get_sentiment(
 
     try:
         return fetch_and_score_news(db, normalized_ticker)
-    except (requests.RequestException, ValueError):
+    except (requests.RequestException, ValueError, SQLAlchemyError):
         db.rollback()
-        fallback = _sentiment_fallback()
-        fallback["ticker"] = normalized_ticker
-        return fallback
-    except SQLAlchemyError:
-        db.rollback()
+        history_payload = _sentiment_from_history(db, normalized_ticker)
+        if history_payload is not None:
+            return history_payload
         fallback = _sentiment_fallback()
         fallback["ticker"] = normalized_ticker
         return fallback
